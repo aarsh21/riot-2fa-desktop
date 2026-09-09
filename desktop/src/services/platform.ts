@@ -1,9 +1,9 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { PNG } from 'pngjs'
-import jsQR from 'jsqr'
-import { ServiceError, parseQr } from './riot'
+import { decodeQrImage } from './qr-image'
+import { WindowsSnapshots } from './windows-snapshots'
+import { ServiceError } from './riot'
 
 function tool(name: string) { const bundled = join(dirname(process.execPath), 'tools', name); return existsSync(bundled) ? bundled : name }
 async function run(args: string[], input?: string, env = process.env): Promise<string> {
@@ -37,29 +37,20 @@ export async function systemDark(): Promise<boolean> {
     return !(await run(['gsettings', 'get', 'org.gnome.desktop.interface', 'color-scheme'])).includes('prefer-light')
   } catch { return process.platform !== 'darwin' }
 }
-export async function captureQr(): Promise<string> {
+export async function captureQr(signal?: AbortSignal): Promise<string> {
+  if (process.platform === 'win32') return new WindowsSnapshots().capture('region', signal)
   const temporary = mkdtempSync(join(tmpdir(), 'riot2fa-qr-'))
   const path = join(temporary, 'capture.png')
   try {
     if (process.platform === 'darwin') await run(['screencapture', '-x', '-i', path])
-    else if (process.platform === 'win32') {
-      await Bun.sleep(1500)
-      await run(ps('Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $r=[System.Windows.Forms.SystemInformation]::VirtualScreen; $b=New-Object System.Drawing.Bitmap($r.Width,$r.Height); $g=[System.Drawing.Graphics]::FromImage($b); try { $g.CopyFromScreen($r.Location,[System.Drawing.Point]::Empty,$r.Size); $b.Save($env:RIOT2FA_CAPTURE,[System.Drawing.Imaging.ImageFormat]::Png) } finally { $g.Dispose(); $b.Dispose() }'), undefined, { ...process.env, RIOT2FA_CAPTURE: path })
-    } else if (process.env.WAYLAND_DISPLAY) {
+    else if (process.env.WAYLAND_DISPLAY) {
       const region = await run([tool('slurp')])
       if (!/^-?\d+,-?\d+ \d+x\d+$/.test(region)) throw new Error('No selection')
       await run([tool('grim'), '-g', region, path])
     } else {
       await run([tool('import'), '-window', 'root', path])
     }
-    const bytes = readFileSync(path)
-    const width = bytes.readUInt32BE(16), height = bytes.readUInt32BE(20)
-    if (width * height > 40000000) throw new ServiceError('The capture is too large. Select only the QR code.')
-    const png = PNG.sync.read(bytes)
-    const result = jsQR(new Uint8ClampedArray(png.data), png.width, png.height)
-    if (!result) throw new ServiceError('No QR code found. Make the code fully visible and try again, or paste its URL.')
-    parseQr(result.data)
-    return result.data
+    return decodeQrImage(readFileSync(path))
   } catch (error) {
     if (error instanceof ServiceError) throw error
     throw new ServiceError('Screen capture was cancelled or is unavailable. Allow screen recording for this app, or paste the QR URL.')

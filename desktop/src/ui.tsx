@@ -1,5 +1,6 @@
+import { version } from '../package.json'
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
-import { useWindowSize, type StyleDesc } from '@gpuix/react'
+import { useWindowSize, useGpuixRequired, type StyleDesc } from '@gpuix/react'
 import type { Account, AccountService, LoginRequest, Result } from './service'
 
 const light = { bg: '#ffffff', rail: '#fafafa', raised: '#f5f5f5', hover: '#eeeeee', border: '#e5e5e5', text: '#171717', muted: '#666666', primary: '#171717', onPrimary: '#ffffff', danger: '#b42318', focus: '#0070f3' }
@@ -53,13 +54,14 @@ function Field({ label, value, onChange, placeholder, testId, autoFocus = false 
   </div>
 }
 function Divider() { const t = useContext(Theme); return <div style={{ height: 1, backgroundColor: t.border, flexShrink: 0 }} /> }
-function Section({ title, children }: { title: string; children: ReactNode }) { return <div style={{ ...col, gap: 12 }}><Text size={16} weight={500}>{title}</Text>{children}</div> }
+function Section({ title, children }: { title: string; children?: ReactNode }) { return <div style={{ ...col, gap: 12 }}><Text size={16} weight={500}>{title}</Text>{children}</div> }
 
 type View = 'accounts' | 'requests' | 'qr' | 'settings' | 'add'
 type Confirm = { kind: 'remove'; account: Account } | { kind: 'approve'; request: LoginRequest } | { kind: 'qr'; result: Result }
 const navigation: { id: View; label: string; icon: IconName }[] = [{ id: 'accounts', label: 'Accounts', icon: 'accounts' }, { id: 'requests', label: 'Requests', icon: 'requests' }, { id: 'qr', label: 'QR sign-in', icon: 'qr' }, { id: 'settings', label: 'Settings', icon: 'settings' }]
 
 export function App({ service }: { service: AccountService }) {
+  const renderer = useGpuixRequired()
   const [, redraw] = useState(0)
   useEffect(() => service.subscribe(() => redraw(v => v + 1)), [service])
   const state = service.state
@@ -78,6 +80,14 @@ export function App({ service }: { service: AccountService }) {
   const [qrUrl, setQrUrl] = useState('')
   const [qrAccount, setQrAccount] = useState('')
   const [confirm, setConfirm] = useState<Confirm | null>(null)
+  useEffect(() => {
+    const snapshot = state?.snapshot
+    if (!snapshot) return
+    setView('qr'); setConfirm(null)
+    setQrUrl(snapshot.url || ''); setError(snapshot.error || '')
+    setNotice(snapshot.url ? 'QR code captured' : '')
+    renderer.activateWindow?.()
+  }, [state?.snapshot?.id, renderer])
   useEffect(() => { if (!notice) return; const timer = setTimeout(() => setNotice(''), 6500); return () => clearTimeout(timer) }, [notice])
   useEffect(() => { if (!copied) return; const timer = setTimeout(() => setCopied(null), 2200); return () => clearTimeout(timer) }, [copied])
   const navigate = (next: View) => { setView(next); setError(''); setConfirm(null); setSecret('') }
@@ -93,7 +103,6 @@ export function App({ service }: { service: AccountService }) {
   const filtered = accounts.filter(a => a.name.toLowerCase().includes(search.toLowerCase().trim()))
   const visibleError = service.error || state?.error || error
   const heading = view === 'add' ? 'Add an account' : view === 'qr' ? 'Sign in with QR' : navigation.find(n => n.id === view)?.label || 'Accounts'
-  const description = { accounts: 'Copy a code to finish signing in.', requests: 'Review sign-ins waiting for your approval.', qr: 'Choose an account, then scan the code in your Riot client.', settings: 'Your account data and desktop preferences.', add: 'Connect through Riot, or enter an existing account secret.' }[view]
   const unavailable = Boolean(service.error || state?.error || !state)
   const nav = <div style={{ ...col, ...(compact ? { flexDirection: 'row', gap: 4 } : { gap: 4, width: '100%' }) }}>{navigation.map(item => <Button key={item.id} testId={`nav-${item.id}`} icon={item.icon} quiet onClick={() => navigate(item.id)} style={{ justifyContent: 'flex-start', backgroundColor: view === item.id || item.id === 'accounts' && view === 'add' ? t.hover : 'transparent', ...(compact ? { flexGrow: 1 } : {}) }}>{item.label}{item.id === 'requests' && requests.length > 0 ? `  ${requests.length}` : ''}</Button>)}</div>
 
@@ -107,20 +116,18 @@ export function App({ service }: { service: AccountService }) {
 
   return <Theme.Provider value={t}><ControlsEnabled.Provider value={!confirm}><div testId="app" style={{ ...col, width: '100%', height: '100%', backgroundColor: t.bg, selectionColor: t.focus + '40' }}>
     <div style={{ ...row, height: 68, paddingLeft: compact ? 24 : 28, paddingRight: 28, borderBottomWidth: 1, borderColor: t.border, flexShrink: 0, justifyContent: 'space-between' }}>
-      <div style={{ ...row, gap: 12 }}><Icon name="lock" color={t.text} size={22} /><Text size={18} weight={600}>Riot 2FA</Text><Text muted style={{ marginLeft: 8 }}>Personal authenticator</Text></div>
-      <Text size={12} muted>{state?.demo ? 'Demo · No real accounts' : 'Desktop'}</Text>
+      <div style={{ ...row, gap: 12 }}><Icon name="lock" color={t.text} size={22} /><Text size={18} weight={600}>Riot 2FA</Text></div>
+      {state?.demo && <Text size={12} muted>Demo</Text>}
     </div>
     {compact && <div style={{ padding: 12, borderBottomWidth: 1, borderColor: t.border }}>{nav}</div>}
     <div style={{ ...row, alignItems: 'stretch', flexGrow: 1, minHeight: 0 }}>
       {!compact && <div style={{ ...col, width: 208, padding: 16, paddingTop: 24, borderRightWidth: 1, borderColor: t.border, backgroundColor: t.rail, flexShrink: 0, justifyContent: 'space-between' }}>
         {nav}
-        <div style={{ ...col, gap: 8, padding: 12 }}><div style={{ ...row, gap: 8 }}><Icon name="lock" size={14} /><Text size={12} muted>Stored on this device</Text></div><Text size={12} muted>Keep the app open for sign-in requests.</Text></div>
       </div>}
       <div testId="main-scroll" style={{ ...col, flexGrow: 1, minHeight: 0, overflowY: 'scroll', padding: compact ? 24 : 40, gap: 28 }}>
         <div style={{ ...col, gap: 24 }}>
-          <div style={{ ...row, gap: 8 }}><Text size={12} muted>Your workspace</Text><Text size={12} muted>/</Text><Text size={12}>{view === 'add' ? 'Accounts / Add account' : heading}</Text></div>
           <div style={{ ...row, justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
-            <div style={{ ...col, gap: 6, flexGrow: 1 }}><Text size={32} weight={600}>{heading}</Text><Text muted>{description}</Text></div>
+            <div style={{ ...col, gap: 6, flexGrow: 1 }}><Text size={32} weight={600}>{heading}</Text></div>
             {view === 'accounts' && <Button primary icon="plus" testId="add-account" onClick={() => navigate('add')}>Add account</Button>}
           </div>
         </div>
@@ -134,7 +141,7 @@ export function App({ service }: { service: AccountService }) {
             <div style={{ height: 2, backgroundColor: t.border }}><div style={{ height: 2, width: `${(state?.remaining ?? 30) / 30 * 100}%`, backgroundColor: t.muted }} /></div>
             {!state && !service.error ? empty('Opening your accounts', 'Loading accounts stored on this device.') : accounts.length === 0 ? empty('Your first account starts here', 'Connect your Riot account to keep its sign-in codes on this device.', <Button primary onClick={() => navigate('add')} icon="plus">Add an account</Button>) : filtered.length === 0 ? empty('No matching accounts', 'Try another Riot ID, or clear your search.', <Button testId="clear-search" onClick={() => setSearch('')}>Clear search</Button>) : filtered.map(a => <div key={a.id} testId={`account-${a.id}`} style={{ ...col, paddingTop: 24, paddingBottom: 24, gap: 16, borderBottomWidth: 1, borderColor: t.border }}>
               <div style={{ ...row, gap: 20, justifyContent: 'space-between', ...(compact ? { flexDirection: 'column', alignItems: 'stretch', gap: 16 } : {}) }}>
-                <div style={{ ...col, gap: 4, flexGrow: 1 }}><Text size={16} weight={500}>{a.name}</Text><Text size={12} muted>{a.qrEnabled ? 'Browser connected · QR sign-in available' : 'Code only · Added manually'}</Text></div>
+                <div style={{ ...col, gap: 4, flexGrow: 1 }}><Text size={16} weight={500}>{a.name}</Text></div>
                 <div style={{ ...row, gap: 12, justifyContent: 'space-between' }}>
                   <Text testId={`code-${a.id}`} size={32} weight={500} style={{ width: 146, whiteSpace: 'nowrap', userSelect: 'none' }}>{!a.code ? 'Invalid' : reveal ? `${a.code.slice(0, 3)} ${a.code.slice(3)}` : '••• •••'}</Text>
                   <Button testId={`copy-${a.id}`} icon={copied === a.id ? 'check' : 'copy'} disabled={Boolean(busy) || unavailable || !a.code} onClick={() => void run('copy', { accountId: a.id }, () => setCopied(a.id))}>{copied === a.id ? 'Copied' : 'Copy'}</Button>
@@ -143,23 +150,22 @@ export function App({ service }: { service: AccountService }) {
               </div>
             </div>)}
           </div>
-          <div style={{ ...row, justifyContent: 'space-between', gap: 20 }}><Text size={12} muted>Codes refresh every 30 seconds.</Text><Text size={12} muted>SHA-256 · 6 digits</Text></div>
         </div>}
 
         {view === 'add' && <div style={{ ...col, maxWidth: 600, gap: 28 }}>
-          <Section title="Connect with Riot"><Text muted>A browser opens for you to sign in. Email two-factor authentication must already be enabled on your account.</Text><div style={{ ...row, gap: 12 }}><Button primary icon="arrow" testId="browser-login" disabled={Boolean(busy) || unavailable} onClick={() => void run('login', {}, () => navigate('accounts'))}>{busy === 'login' ? 'Waiting for browser…' : 'Continue with Riot'}</Button>{busy === 'login' && <Button onClick={() => { void service.call('cancel_login').catch(() => {}) }}>Cancel login</Button>}</div></Section>
+          <Section title="Connect with Riot"><Text muted>Requires email two-factor authentication.</Text><div style={{ ...row, gap: 12 }}><Button primary icon="arrow" testId="browser-login" disabled={Boolean(busy) || unavailable} onClick={() => void run('login', {}, () => navigate('accounts'))}>{busy === 'login' ? 'Waiting for browser…' : 'Continue with Riot'}</Button>{busy === 'login' && <Button onClick={() => { void service.call('cancel_login').catch(() => {}) }}>Cancel login</Button>}</div></Section>
           <Divider />
-          <Section title="Or add an existing secret"><Text muted>Use an account secret you already own. This adds codes without connecting a browser session.</Text></Section>
+          <Section title="Or add an existing secret"></Section>
           <Field label="Account name" value={name} onChange={setName} placeholder="YourName#EUW" testId="account-name" />
           <Field label="Account secret or setup URL" value={secret} onChange={setSecret} placeholder="Paste your Base32 secret" testId="account-secret" />
-          <Text size={12} muted>The secret is visible while you enter it. Avoid screen sharing. It is stored locally in accounts.json.</Text>
+          <Text size={12} muted>Secret entry is visible. Stored unencrypted on this device.</Text>
           <div style={{ ...row, gap: 12 }}><Button primary testId="save-account" disabled={Boolean(busy) || unavailable || !name.trim() || !secret.trim()} onClick={() => void run('add', { name, secret }, () => { setName(''); setSecret(''); navigate('accounts') })}>{busy === 'add' ? 'Adding…' : 'Add account'}</Button><Button quiet onClick={() => navigate('accounts')}>Cancel</Button></div>
         </div>}
 
         {view === 'requests' && <div style={{ ...col, gap: 24 }}>
           <div style={{ ...row, justifyContent: 'space-between' }}><Text size={12} muted>{requests.length} pending</Text><Text size={12} muted>{state?.pushStatus || 'Connecting'}</Text></div><Divider />
           {requests.length === 0 ? empty('No sign-ins waiting', 'New sign-in requests appear here while the app is open. Only approve requests you started.') : requests.map(request => <div key={request.id} style={{ ...col, gap: 20, paddingBottom: 24, borderBottomWidth: 1, borderColor: t.border }}>
-            <div style={{ ...col, gap: 6 }}><Text size={24} weight={500}>{request.name}</Text><Text muted>{request.demo ? 'Illustrative sign-in request' : 'A sign-in needs your approval'}</Text></div>
+            <div style={{ ...col, gap: 6 }}><Text size={24} weight={500}>{request.name}</Text></div>
             <div style={{ ...col, gap: 8 }}><Text>Location: {request.location}</Text><Text muted>Requested: {formatTime(request.time)}</Text></div>
             <div style={{ ...row, gap: 12 }}><Button primary testId={`approve-${request.id}`} disabled={Boolean(busy) || unavailable} onClick={() => { setError(''); setConfirm({ kind: 'approve', request }) }}>Review approval</Button><Button testId={`deny-${request.id}`} disabled={Boolean(busy) || unavailable} onClick={() => void run('respond', { requestId: request.id, approve: false })}>Deny sign-in</Button></div>
           </div>)}
@@ -167,22 +173,23 @@ export function App({ service }: { service: AccountService }) {
 
         {view === 'qr' && <div style={{ ...col, gap: 24, maxWidth: 600 }}>
           <Section title="Account to sign in">{accounts.filter(a => a.qrEnabled).length === 0 ? <Text muted>Add an account through browser login to use QR sign-in.</Text> : accounts.filter(a => a.qrEnabled).map(a => <Button key={a.id} testId={`qr-account-${a.id}`} icon={qrAccount === a.id ? 'check' : 'accounts'} onClick={() => { setQrAccount(a.id); setConfirm(null) }} style={{ justifyContent: 'flex-start', backgroundColor: qrAccount === a.id ? t.raised : 'transparent', borderColor: qrAccount === a.id ? t.text : t.border }}>{a.name}</Button>)}</Section>
-          <Divider /><Section title="Read the QR code"><Text muted>Open QR sign-in in your Riot client. Make the code visible on screen, then capture it or paste its URL below.</Text><div style={{ ...row }}><Button icon="qr" testId="scan-screen" disabled={Boolean(busy) || unavailable || !qrAccount} onClick={() => void run('scan', {}, result => { if (result.url) setQrUrl(result.url) })}>{busy === 'scan' ? 'Choose the QR code…' : 'Capture QR code'}</Button></div><Text size={12} muted>Screen capture may need permission on macOS. On Wayland, use the pasted URL if screen capture is unavailable.</Text></Section>
+          <Divider /><Section title="SnapShots"><div style={{ ...row }}><Button icon="qr" testId="scan-screen" disabled={Boolean(busy) || unavailable} onClick={() => void run('scan', {}, result => { if (result.url) setQrUrl(result.url) })}>{busy === 'scan' ? 'Select a region…' : 'Capture region'}</Button>{busy === 'scan' && process.platform === 'win32' && <Button onClick={() => { void service.call('cancel_scan') }}>Cancel capture</Button>}</div></Section>
           <Field label="Riot QR sign-in URL" value={qrUrl} onChange={value => { setQrUrl(value); setConfirm(null) }} placeholder="Paste the URL from your QR code" testId="qr-url" />
           <div style={{ ...row }}><Button primary disabled={Boolean(busy) || unavailable || !qrAccount || !qrUrl.trim()} testId="review-qr" onClick={() => void run('qr_prepare', { accountId: qrAccount, url: qrUrl }, result => setConfirm({ kind: 'qr', result }))}>{busy === 'qr_prepare' ? 'Loading request…' : 'Review sign-in'}</Button></div>
-          <Text size={12} muted>You will review the account and location before approving.</Text>
         </div>}
 
         {view === 'settings' && <div style={{ ...col, gap: 28, maxWidth: 620 }}>
+          {process.platform === 'win32' && <><Section title="SnapShots"><div style={{ ...row, gap: 16, justifyContent: 'space-between' }}><Text>Both Shift keys · Active window</Text><Button testId="toggle-snapshots" disabled={Boolean(busy)} onClick={() => void run('snapshots', { enabled: !state?.snapshotsEnabled })}>{state?.snapshotsEnabled ? 'Disable shortcut' : 'Enable shortcut'}</Button></div><Text size={12} muted>{state?.snapshotStatus}</Text></Section><Divider /></>}
+
           <Section title="Account storage"><Text muted>Your accounts stay in a local JSON file. Account secrets and browser sessions are not encrypted by this app.</Text><Text size={12} style={{ fontFamily: process.platform === 'win32' ? 'Consolas' : 'monospace' }}>{state?.storagePath || 'Loading path…'}</Text></Section><Divider />
           <Section title="Privacy"><Text muted>Codes are hidden on launch. While the app is open, copied codes clear from the clipboard after 30 seconds, unless you have copied something else.</Text><Text muted>Removing an account here does not disable two-factor authentication on Riot.</Text></Section><Divider />
           <Section title="Appearance"><Text muted>Follows your system appearance. Native window controls follow your operating system.</Text></Section><Divider />
           <Section title="Sign-in requests"><Text muted>{state?.pushStatus || 'Connecting'}. Keep this window open or minimized to receive requests. Closing the window quits the app.</Text></Section><Divider />
-          <Section title="About"><Text>Riot 2FA · GPUIx edition 0.1.0</Text><Text muted>An independent desktop client. Not affiliated with Riot Games or Vercel.</Text><Text size={12} muted>This edition does not install updates automatically. The check below reports releases of this desktop app.</Text><div style={{ ...row }}><Button testId="check-update" disabled={Boolean(busy) || unavailable} onClick={() => void run('check_update')}>{busy === 'check_update' ? 'Checking…' : 'Check for updates'}</Button></div></Section>
+          <Section title="About"><Text>Riot 2FA · {version}</Text><Text muted>An independent desktop client. Not affiliated with Riot Games or Vercel.</Text><Text size={12} muted>This edition does not install updates automatically. The check below reports releases of this desktop app.</Text><div style={{ ...row }}><Button testId="check-update" disabled={Boolean(busy) || unavailable} onClick={() => void run('check_update')}>{busy === 'check_update' ? 'Checking…' : 'Check for updates'}</Button></div></Section>
         </div>}
       </div>
     </div>
-    <div style={{ ...row, justifyContent: 'space-between', height: 36, paddingLeft: 24, paddingRight: 24, borderTopWidth: 1, borderColor: t.border, flexShrink: 0 }}><Text size={12} muted>{state?.pushStatus || 'Opening your accounts'}</Text><Text size={12} muted>{state?.demo ? 'Sample data · Changes are not saved' : 'Only approve sign-ins you started'}</Text></div>
+    <div style={{ ...row, justifyContent: 'space-between', height: 36, paddingLeft: 24, paddingRight: 24, borderTopWidth: 1, borderColor: t.border, flexShrink: 0 }}><Text size={12} muted>{state?.pushStatus || 'Opening your accounts'}</Text></div>
     {confirm && <ControlsEnabled.Provider value={true}><div testId="confirmation-overlay" style={{ ...col, position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: '#00000099', justifyContent: 'center', alignItems: 'center', padding: 24, pointerEvents: 'auto' }}>
       <div testId="confirmation" tabIndex={0} autoFocus onKeyDown={e => { if (e.key === 'escape' && !busy) setConfirm(null) }} style={{ ...col, width: '100%', maxWidth: 460, backgroundColor: t.bg, borderWidth: 1, borderColor: t.border, borderRadius: 8, padding: 28, gap: 20 }}>
         <Text size={24} weight={600}>{confirm.kind === 'remove' ? 'Remove this account?' : 'Approve this sign-in?'}</Text>

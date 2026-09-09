@@ -1,15 +1,16 @@
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { accountId, extractSecret, totp } from './services/totp'
-import { dataDirectory, loadAccounts, writeJson, type SavedAccount } from './services/storage'
+import { dataDirectory, loadAccounts, readJson, writeJson, type SavedAccount } from './services/storage'
 import * as riot from './services/riot'
 import { BrowserLogin } from './services/browser'
 import { captureQr, notifySignIn, readClipboard, systemDark, writeClipboard } from './services/platform'
 import { PushClient } from './services/push'
+import { WindowsSnapshots, type SnapshotEvent } from './services/windows-snapshots'
 
 export type Account = { id: string; name: string; code: string | null; qrEnabled: boolean }
 export type LoginRequest = { id: string; accountId: string; name: string; time: number | string | null; location: string; demo?: boolean }
-export type State = { accounts: Account[]; requests: LoginRequest[]; remaining: number; pushStatus: string; demo: boolean; dark: boolean; storagePath: string; error: string | null }
+export type State = { accounts: Account[]; requests: LoginRequest[]; remaining: number; pushStatus: string; demo: boolean; dark: boolean; storagePath: string; error: string | null; snapshotsEnabled: boolean; snapshotStatus: string; snapshot: (SnapshotEvent & { id: string }) | null }
 export type Result = { message?: string; url?: string; confirmation?: string; name?: string; location?: string }
 type PendingRequest = LoginRequest & { raw?: Record<string, unknown>; busy?: boolean }
 type QrConfirmation = { accountId: string; token: string; suuid: string; cluster: string; expires: number }
@@ -38,6 +39,11 @@ export class AccountService {
   private lastRegisteredToken = ''
   private themeDark = true
   private pushStatus = 'Starting listener'
+  private snapshots = new WindowsSnapshots()
+  private snapshotsEnabled = false
+  private snapshotStatus = 'Off'
+  private latestSnapshot: State['snapshot'] = null
+  private captureController: AbortController | null = null
 
   constructor(private demo: boolean, private directory = dataDirectory(), live = true) {
     try {
@@ -54,6 +60,10 @@ export class AccountService {
     this.state = this.snapshot()
     this.timer = setInterval(() => this.emit(), 1000)
     if (!demo && live) {
+      try {
+        this.snapshotsEnabled = process.platform === 'win32' && readJson<{ snapshotsEnabled?: boolean }>(join(directory, 'preferences.json'), {}).snapshotsEnabled === true
+        if (this.snapshotsEnabled) this.startSnapshots()
+      } catch { this.snapshotStatus = 'Could not read shortcut preference' }
       const appearance = async () => { this.themeDark = await systemDark(); if (!this.stopped) this.emit() }
       void appearance(); this.appearanceTimer = setInterval(() => void appearance(), 30000)
       if (!this.error) {
@@ -68,6 +78,7 @@ export class AccountService {
       accounts: this.accounts.map(account => { let code: string | null = null; try { code = totp(account.seed) } catch {} return { id: accountId(account), name: account.name, code, qrEnabled: Boolean(account.sso && Object.keys(account.sso).length) } }),
       requests: [...this.requests.values()].map(({ raw, busy, ...request }) => request), remaining: 30 - Math.floor(Date.now() / 1000) % 30,
       pushStatus: this.pushStatus, demo: this.demo, dark: this.themeDark, storagePath: this.demo ? 'In-memory demo' : this.directory, error: this.error,
+      snapshotsEnabled: this.snapshotsEnabled, snapshotStatus: this.snapshotStatus, snapshot: this.latestSnapshot,
     }
   }
   private emit() { if (this.stopped) return; this.state = this.snapshot(); for (const listener of this.listeners) listener() }
@@ -87,6 +98,7 @@ export class AccountService {
     this.commit([...this.accounts, account])
   }
   async call(method: string, params: Record<string, unknown> = {}): Promise<Result> {
+    if (method === 'cancel_scan') { this.captureController?.abort(); return {} }
     if (method === 'cancel_login') { this.browser.cancel(); return { message: 'Cancelling browser login' } }
     if (this.busy) throw new riot.ServiceError('Another action is still running. Wait for it to finish.')
     if (this.error) throw new riot.ServiceError(this.error)
@@ -121,7 +133,19 @@ export class AccountService {
         case 'respond': return await this.respond(String(params.requestId), params.approve === true)
         case 'scan': {
           if (this.demo) throw new riot.ServiceError('Screen scanning is disabled in the demo.')
-          return { url: await captureQr() }
+          this.captureController = new AbortController()
+          try { return { url: await captureQr(this.captureController.signal) } }
+          finally { this.captureController = null }
+        }
+        case 'snapshots': {
+          if (process.platform !== 'win32' && !this.demo) throw new riot.ServiceError('The global shortcut is available on Windows. Use Capture region on this desktop.')
+          const enabled = params.enabled === true
+          if (!this.demo) writeJson(join(this.directory, 'preferences.json'), { snapshotsEnabled: enabled }, this.directory)
+          this.snapshotsEnabled = enabled
+          this.snapshots.close()
+          this.snapshotStatus = enabled ? 'Starting shortcut' : 'Off'
+          if (enabled && !this.demo) this.startSnapshots()
+          return {}
         }
         case 'qr_prepare': return await this.prepareQr(String(params.accountId), String(params.url || ''))
         case 'qr_approve': return await this.approveQr(String(params.confirmation))
@@ -153,6 +177,14 @@ export class AccountService {
       else message += '. Push registration is unavailable; codes are ready.'
     } catch { message += '. Verification or push registration failed; the account secret was saved.' }
     return { message }
+  }
+  private startSnapshots() {
+    this.snapshots.start(event => {
+      if (this.stopped) return
+      if (event.status) this.snapshotStatus = event.status
+      if (!this.busy && (event.url || event.error)) this.latestSnapshot = { ...event, id: randomUUID() }
+      this.emit()
+    })
   }
   private async validToken(account: SavedAccount): Promise<string> {
     let token: string | null = null
@@ -226,5 +258,6 @@ export class AccountService {
     if (this.appearanceTimer) clearInterval(this.appearanceTimer)
     for (const timer of this.clipboardTimers) clearTimeout(timer)
     this.browser.cancel(); this.push?.close()
+    this.snapshots.close(); this.captureController?.abort()
   }
 }

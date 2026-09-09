@@ -2,6 +2,7 @@ import { cpSync, mkdirSync, rmSync, writeFileSync, chmodSync, readdirSync, readF
 import { join, resolve } from 'node:path'
 const root = resolve(import.meta.dir, '..')
 const dist = join(root, 'dist')
+const { version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 async function run(args: string[], env = process.env) {
   const child = Bun.spawn(args, { cwd: root, env, stdin: 'inherit', stdout: 'inherit', stderr: 'inherit' })
   if (await child.exited !== 0) throw new Error(`Build failed: ${args[0]}`)
@@ -37,7 +38,7 @@ for (const name of ['patchright', 'patchright-core']) {
   cpSync(join(root, 'node_modules', name), join(folder, 'runtime', 'node_modules', name), { recursive: true })
 }
 if (process.platform === 'darwin') {
-  writeFileSync(join(folder, '..', 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleName</key><string>Riot 2FA</string><key>CFBundleIdentifier</key><string>dev.riot2fa.desktop</string><key>CFBundleExecutable</key><string>riot-2fa</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleShortVersionString</key><string>0.1.0</string><key>NSHighResolutionCapable</key><true/></dict></plist>`)
+  writeFileSync(join(folder, '..', 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleName</key><string>Riot 2FA</string><key>CFBundleIdentifier</key><string>dev.riot2fa.desktop</string><key>CFBundleExecutable</key><string>riot-2fa</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleShortVersionString</key><string>${version}</string><key>NSHighResolutionCapable</key><true/></dict></plist>`)
 }
 if (process.platform === 'linux') {
   mkdirSync(join(folder, 'tools'), { recursive: true })

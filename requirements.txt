@@ -1,6 +1,0 @@
-PyQt6
-patchright
-requests
-firebase-messaging>=0.4.5
-opencv-python
-numpy

@@ -1,24 +1,22 @@
-A native GPUIx desktop preview with a monochrome interface, bundled Geist fonts, system appearance, and TypeScript account logic. No Python or separate server is required.
+## Changes
+
+- Removed redundant UI captions and helper text.
+- Added Windows SnapShots: enable it in Settings, focus a Riot QR window, then press both Shift keys. Captures are decoded locally and deleted, with explicit sign-in review afterward.
+- Capture region now uses Windows Snipping Tool, with region/window selection and cancellation.
+- Removed legacy source files and rewrote the README, preserving credit to Askin242.
 
 ## Downloads
 
 - Windows x64: extract the ZIP and open `Riot 2FA.exe`.
-- Linux x64: extract the archive and open `Launch Riot 2FA` in the application folder. Requires a graphical desktop and compatible graphics libraries.
+- Linux x64: extract the archive and open `Launch Riot 2FA`.
 - macOS Apple Silicon: extract the archive and open `Riot 2FA.app`.
 
-Keep each application's resources together. Chromium is included for the dedicated sign-in window. SHA256SUMS.txt contains archive checksums.
+Keep application resources together. No separate runtime installation is needed. Checksums are included.
 
-## Included
+## Preview limits
 
-Account search, SHA-256 authentication codes, copy, manual account addition, account removal, browser enrollment, explicit push approval/denial, and QR sign-in with confirmation. Codes are hidden on launch. Copy clears after 30 seconds if unchanged while the app remains open.
+Live Riot sign-in was confirmed by the user on Linux. Push registration still reports `PHONE_REGISTRATION_ERROR` on the development machine. QR approval against a live Riot request remains unverified.
 
-## Preview limitations
+Windows CI tests native capture and the both-Shift shortcut against a synthetic QR window. macOS/Linux retain region capture; their global shortcut is not implemented. Windows Snipping Tool places its capture on the clipboard.
 
-- The user confirmed live Riot sign-in on the Linux development build. QR sign-in has not been confirmed end to end. Push registration currently reports `PHONE_REGISTRATION_ERROR` on the development machine. Do not rely on this preview as your only way to sign in.
-- Native interaction checks passed on Linux with synthetic accounts. Windows and macOS packages pass build and unit checks before publication, but have not had native UI or live-account testing.
-- Builds are unsigned and macOS is not notarized. OS security prompts may prevent opening them.
-- Closing the window quits; there is no close-to-tray behavior. Windows OS toast notifications are not implemented.
-- Account secrets and saved sessions are local, unencrypted JSON. Manual secret entry is visible. Full screen-reader support is not established.
-- Screen capture depends on desktop support and permissions. A QR URL can be pasted instead.
-
-This is independent software, not affiliated with Riot Games or Vercel. The original Python app remains available in the source tree.
+Builds are unsigned, and macOS is not notarized. Closing quits; there is no close-to-tray. Secrets and sessions are stored in local unencrypted JSON. Full screen-reader support is not established. Do not rely on this preview as your only sign-in method.
