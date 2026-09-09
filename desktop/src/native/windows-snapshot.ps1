@@ -7,6 +7,8 @@ public class SnapshotNative {
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out Rect r);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int command);
   [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int key);
   [DllImport("user32.dll")] public static extern uint GetClipboardSequenceNumber();
   [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr context);
@@ -36,6 +38,9 @@ function Save-Window {
     $graphics.CopyFromScreen($rect.Location, [System.Drawing.Point]::Empty, $rect.Size)
     $file = [Guid]::NewGuid().ToString() + '.png'
     $bitmap.Save((Join-Path $env:RIOT2FA_SNAPSHOT_DIR $file), [System.Drawing.Imaging.ImageFormat]::Png)
+    if ($env:RIOT2FA_SNAPSHOT_MODE -eq 'selftest') {
+      $bitmap.Save((Join-Path ([System.IO.Path]::GetDirectoryName($env:RIOT2FA_SNAPSHOT_FIXTURE)) 'captured.png'), [System.Drawing.Imaging.ImageFormat]::Png)
+    }
     Emit @{ type = 'capture'; file = $file }
   } finally { $graphics.Dispose(); $bitmap.Dispose() }
 }
@@ -86,9 +91,14 @@ try {
       $picture.Image = [System.Drawing.Image]::FromFile($env:RIOT2FA_SNAPSHOT_FIXTURE)
       $form.Controls.Add($picture)
       try {
-        $form.Show(); $form.Activate()
+        $form.Show()
+        [void][SnapshotNative]::ShowWindow($form.Handle, 5)
+        [void][SnapshotNative]::SetForegroundWindow($form.Handle)
+        $form.BringToFront(); $form.Activate(); $form.Refresh(); $picture.Refresh()
         [System.Windows.Forms.Application]::DoEvents()
         Start-Sleep -Milliseconds 500
+        [System.Windows.Forms.Application]::DoEvents()
+        if ([SnapshotNative]::GetForegroundWindow() -ne $form.Handle) { throw 'The test window could not take focus' }
         if ($env:RIOT2FA_SNAPSHOT_TEST_SHORTCUT -eq '1') {
           try {
             [SnapshotNative]::keybd_event(0xA0, 0x2A, 0, [UIntPtr]::Zero)
@@ -99,6 +109,8 @@ try {
             [SnapshotNative]::keybd_event(0xA1, 0x36, 2, [UIntPtr]::Zero)
           }
         }
+        $form.Refresh(); [System.Windows.Forms.Application]::DoEvents()
+        if ([SnapshotNative]::GetForegroundWindow() -ne $form.Handle) { throw 'The test window lost focus' }
         Save-Window
       } finally { $picture.Image.Dispose(); $form.Close(); $form.Dispose() }
     }

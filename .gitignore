@@ -34,3 +34,5 @@ desktop/.package/
 desktop/.native-browsers/
 desktop/riot-2fa-*.tar.gz
 desktop/riot-2fa-*.zip
+
+desktop/test-results/

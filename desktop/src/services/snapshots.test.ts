@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import QRCode from 'qrcode'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync, copyFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { PNG } from 'pngjs'
@@ -38,6 +38,10 @@ test.skipIf(process.platform !== 'win32')('Windows captures a synthetic foregrou
     expect(errors).toEqual([])
     expect(received).toEqual([url])
   } finally {
+    if (process.env.CI && existsSync(join(dir, 'captured.png'))) {
+      mkdirSync('test-results', { recursive: true })
+      copyFileSync(join(dir, 'captured.png'), 'test-results/windows-snapshot.png')
+    }
     if (previous === undefined) delete process.env.RIOT2FA_SNAPSHOT_TEST_SHORTCUT
     else process.env.RIOT2FA_SNAPSHOT_TEST_SHORTCUT = previous
     watcher.close(); capture.close()
