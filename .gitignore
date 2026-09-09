@@ -24,3 +24,13 @@ enable_mfa*.json
 dist_test/
 build/build_test.log
 *.rar
+
+# Native desktop dependencies and local review output
+desktop/node_modules/
+desktop/dist/
+desktop/.package/
+.impeccable/review/
+.impeccable/build/
+desktop/.native-browsers/
+desktop/riot-2fa-*.tar.gz
+desktop/riot-2fa-*.zip

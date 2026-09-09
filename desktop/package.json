@@ -1,0 +1,31 @@
+{
+  "name": "riot-2fa-desktop",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun --hot src/main.tsx",
+    "demo": "bun src/main.tsx --demo",
+    "typecheck": "tsc --noEmit",
+    "build": "bun scripts/package.ts",
+    "verify": "bun scripts/verify.ts",
+    "test": "bun test src/services"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "@types/pngjs": "^6.0.5",
+    "@types/react": "^19.2.18",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@eneris/push-receiver": "^4.3.1",
+    "@gpuix/react": "^0.7.0",
+    "jsqr": "^1.4.0",
+    "patchright": "^1.63.0",
+    "pngjs": "^7.0.0",
+    "react": "^19.2.8"
+  },
+  "patchedDependencies": {
+    "@eneris/push-receiver@4.3.1": "patches/@eneris%2Fpush-receiver@4.3.1.patch"
+  }
+}

@@ -1,3 +1,13 @@
+# Riot 2FA native desktop
+
+The GPUIx desktop edition lives in [desktop/](desktop/). It runs as one app with TypeScript account logic and no Python service.
+
+[Download desktop previews](https://github.com/aarsh21/riot-2fa-desktop/releases) · [Build and run](desktop/README.md) · [Preview limitations](desktop/RELEASE_NOTES.md)
+
+The original Python project and its history are retained below, with attribution to [Askin242/RiotGames-Mobile-2FA-Bypass](https://github.com/Askin242/RiotGames-Mobile-2FA-Bypass).
+
+---
+
 <div align="center">
   <h1 align="center">Riot Games Mobile 2FA Bypass</h1>
   <p align="center">

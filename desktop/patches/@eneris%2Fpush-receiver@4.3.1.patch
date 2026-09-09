@@ -1,0 +1,51 @@
+diff --git a/dist/utils/request.js b/dist/utils/request.js
+index 89f592f44d6fdd773cea5cd3780c8353f3a1b346..abe7a92d2c8d18168d43fb8238fe2560479efbc3 100644
+--- a/dist/utils/request.js
++++ b/dist/utils/request.js
+@@ -11,31 +11,22 @@ const logger_1 = __importDefault(require("./logger"));
+ const MAX_RETRY_TIMEOUT = 15;
+ // Step in seconds
+ const RETRY_STEP = 5;
+-function requestWithRety(url, options, maxRetries = 3) {
+-    return retry(0, url, options, maxRetries);
+-}
+-async function retry(retryCount = 0, url, options, maxRetries = 3) {
+-    try {
+-        return await fetch(url, options)
+-            .then(async (response) => {
+-            if (response.ok)
+-                return response;
+-            // Response not ok. This means server responded but with an error. We retry with increased retry count
+-            const timeout = Math.min(retryCount * RETRY_STEP, MAX_RETRY_TIMEOUT);
+-            logger_1.default.debug(`Request failed : ${response.statusText}`);
+-            logger_1.default.debug(`Retrying in ${timeout} seconds`);
+-            if (retryCount >= maxRetries)
+-                throw response.statusText;
+-            await (0, timeout_1.default)(timeout * 1000);
+-            return retry(retryCount + 1, url, options);
+-        });
+-    }
+-    catch {
+-        logger_1.default.debug('Request failed with network error. Wait 10s and retry');
+-        // Fetch throws only for network errors. In that case we wait a bit and retry without increasing the count
+-        await (0, timeout_1.default)(10_000); // 10 seconds
+-        return retry(retryCount, url, options);
++async function requestWithRety(url, options, maxRetries = 3) {
++    // A failed registration must settle; the app can display a retryable state.
++    for (let attempt = 0; attempt <= maxRetries; attempt++) {
++        try {
++            const response = await fetch(url, { ...options, signal: options.signal || AbortSignal.timeout(15000) });
++            if (response.ok) return response;
++            if (response.status >= 400 && response.status < 500 && response.status !== 429) {
++                throw new Error("Push registration was refused");
++            }
++        } catch (error) {
++            if (error.message === "Push registration was refused" || attempt === maxRetries) throw new Error("Push registration failed");
++        }
++        if (attempt === maxRetries) break;
++        await (0, timeout_1.default)(Math.min((attempt + 1) * 1000, 5000));
+     }
++    throw new Error("Push registration failed");
+ }
+ const getEndpoint = (config, baseUrl, path = '') => (`${baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`}projects/${config.firebase.projectId}/${path}`);
+ exports.getEndpoint = getEndpoint;
