@@ -2,6 +2,7 @@ import { cpSync, mkdirSync, rmSync, writeFileSync, chmodSync, readdirSync, readF
 import { join, resolve } from 'node:path'
 const root = resolve(import.meta.dir, '..')
 const dist = join(root, 'dist')
+if (!existsSync(join(root, 'node_modules/@gpuix/native/riot-revision'))) throw new Error('Run bun run prepare:renderer before packaging.')
 const { version } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 async function run(args: string[], env = process.env) {
   const child = Bun.spawn(args, { cwd: root, env, stdin: 'inherit', stdout: 'inherit', stderr: 'inherit' })
@@ -13,7 +14,7 @@ rmSync(dist, { recursive: true, force: true })
 const folder = process.platform === 'darwin' ? join(dist, 'Riot 2FA.app', 'Contents', 'MacOS') : join(dist, 'Riot 2FA')
 mkdirSync(folder, { recursive: true })
 const executable = join(folder, process.platform === 'win32' ? 'Riot 2FA.exe' : 'riot-2fa')
-await run(['bun', 'build', '--compile', '--no-compile-autoload-dotenv', '--no-compile-autoload-bunfig', ...(process.platform === 'win32' ? ['--windows-hide-console', '--windows-title=Riot 2FA'] : []), 'src/main.tsx', '--outfile', executable])
+await run(['bun', 'build', '--compile', '--no-compile-autoload-dotenv', '--no-compile-autoload-bunfig', '--external', 'usocket', '--external', 'x11', ...(process.platform === 'win32' ? ['--windows-hide-console', '--windows-title=Riot 2FA'] : []), 'src/main.tsx', '--outfile', executable])
 cpSync(join(root, 'assets'), join(folder, 'assets'), { recursive: true })
 cpSync(join(root, '..', 'LICENSE'), join(folder, 'LICENSE'))
 const modules = join(root, 'node_modules')
@@ -34,9 +35,10 @@ for (const name of packages) {
 }
 writeFileSync(join(folder, 'THIRD-PARTY-NOTICES.txt'), notices.join('\n') + '\n')
 cpSync(browsers, join(folder, 'browsers'), { recursive: true })
-for (const name of ['patchright', 'patchright-core']) {
+for (const name of ['patchright', 'patchright-core', `@trayjs/${process.platform}-${process.arch}`]) {
   cpSync(join(root, 'node_modules', name), join(folder, 'runtime', 'node_modules', name), { recursive: true })
 }
+writeFileSync(join(folder, 'runtime', 'package.json'), '{}')
 if (process.platform === 'darwin') {
   writeFileSync(join(folder, '..', 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleName</key><string>Riot 2FA</string><key>CFBundleIdentifier</key><string>dev.riot2fa.desktop</string><key>CFBundleExecutable</key><string>riot-2fa</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleShortVersionString</key><string>${version}</string><key>NSHighResolutionCapable</key><true/></dict></plist>`)
 }

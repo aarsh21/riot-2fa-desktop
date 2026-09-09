@@ -24,6 +24,9 @@ export function writeJson(path: string, value: unknown, directory: string) {
 }
 export function loadAccounts(directory: string): SavedAccount[] {
   const data = readJson<unknown>(join(directory, 'accounts.json'), [])
+  return validateAccounts(data)
+}
+export function validateAccounts(data: unknown): SavedAccount[] {
   if (!Array.isArray(data) || data.some(a => !a || typeof a.name !== 'string' || typeof a.seed !== 'string' || a.sso && (typeof a.sso !== 'object' || Object.values(a.sso).some(v => typeof v !== 'string')))) throw new Error('Account storage could not be read. Repair or restore accounts.json before adding accounts.')
   return data
 }

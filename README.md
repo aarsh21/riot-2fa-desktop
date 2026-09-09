@@ -11,10 +11,14 @@ A native desktop authenticator built with GPUIx, React and TypeScript. One app, 
 - Explicit approval or denial of sign-in requests.
 - QR sign-in with a separate confirmation.
 - SnapShots on Windows: enable the shortcut in Settings, focus the window containing a Riot QR code, then press both Shift keys together. The app captures that window, reads the QR code locally, and opens the review flow.
-- Capture region uses Windows Snipping Tool, with region and window selection. macOS uses its native capture selector. Linux uses available desktop capture tools.
+- Region capture on Windows, macOS and Linux. Windows uses its own selector without touching the clipboard.
+- macOS both-Shift and Linux desktop-portal capture shortcuts.
+- Close-to-tray, with Open and Quit actions, when the desktop has a tray host.
+- Encrypted account and session storage backed by the OS credential store.
+- Native accessibility labels, headings and dialogs.
 - System light and dark appearance, with bundled Geist fonts.
 
-Snapshots are temporary and deleted after decoding. The shortcut is off until enabled. Capturing a QR code never approves a sign-in automatically. Windows Snipping Tool also places its capture on the system clipboard.
+Snapshots are temporary and deleted after decoding. The shortcut is off until enabled. Capturing a QR code never approves a sign-in automatically.
 
 ## Install
 
@@ -30,11 +34,12 @@ These are unsigned preview builds. macOS builds are not notarized. Linux require
 
 ## Development
 
-Install Bun 1.4.2, then:
+Install Bun 1.4.2 and Rust 1.97.1, then:
 
 ```sh
 cd desktop
 bun install --frozen-lockfile
+bun run prepare:renderer
 bunx patchright install chromium
 bun run dev
 ```
@@ -47,9 +52,13 @@ bun test src/services
 bun run verify
 ```
 
-Windows CI checks actual capture of a synthetic QR window. Linux UI checks cover keyboard interaction, compact layout, and light/dark appearance. Live sign-in was confirmed by the user on Linux; push registration remains a known issue. Closing the app stops sign-in requests.
+Windows CI checks actual capture of a synthetic QR window. Linux UI checks cover keyboard interaction, compact layout, and light/dark appearance. Live sign-in was confirmed by the user on Linux. Live QR approval remains unverified. Google rejects desktop push registration because Riot’s Firebase API key is restricted to its Android app.
 
-Account secrets and sessions are stored locally as unencrypted JSON. Full screen-reader support is not yet available. No account data is included in this repository.
+Account secrets and sessions are encrypted using a key held by Windows Credential Manager, macOS Keychain or Linux Secret Service. The credential store must be unlocked. Existing account JSON migrates automatically. Copying vault files alone does not transfer accounts to another device.
+
+Linux global shortcuts require a supporting desktop portal. Hyprland users must assign `dev.riot2fa.desktop:capture` to a key in their compositor settings. macOS may request Input Monitoring and Screen Recording permissions. Native accessibility support is implemented; complete screen-reader workflows still need human verification. No account data is included in this repository.
+
+See [desktop development](desktop/README.md) for native build dependencies and verification.
 
 ## Credits
 

@@ -4,13 +4,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AccountService } from '../service'
 import { accountId, decodeBase32, extractSecret, totp } from './totp'
-import { dataDirectory, loadAccounts, writeJson } from './storage'
+import { dataDirectory, writeJson } from './storage'
+import { Vault } from './vault'
 import { cookiesForHost } from './browser'
 import { cookieHeader, parseQr, tokenValid } from './riot'
 
 const dirs: string[] = [], services: AccountService[] = []
 function directory() { const path = mkdtempSync(join(tmpdir(), 'riot2fa-test-')); dirs.push(path); return path }
-function service(demo = true, path = directory()) { const s = new AccountService(demo, path, false); services.push(s); return s }
+function service(demo = true, path = directory()) { const s = new AccountService(demo, path, false, new Vault(path, Buffer.alloc(32, 7))); services.push(s); return s }
 afterEach(() => { for (const s of services.splice(0)) s.close(); for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }) })
 
 test('SHA256 matches RFC 6238 at multiple timestamps', () => {
@@ -42,11 +43,11 @@ test('atomic saves retain the last good file when serialization fails and clean 
   if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(0o600)
 })
 test('corrupt account storage is not silently replaced', async () => {
-  const dir = directory(); writeFileSync(join(dir, 'accounts.json'), '{invalid')
+  const dir = directory(); writeFileSync(join(dir, 'accounts.vault'), '{invalid')
   const s = service(false, dir)
   expect(s.error).toContain('could not be read')
   await expect(s.call('add', { name: 'test', secret: 'GEZDGNBVGY3TQOJQ' })).rejects.toThrow()
-  expect(readFileSync(join(dir, 'accounts.json'), 'utf8')).toBe('{invalid')
+  expect(readFileSync(join(dir, 'accounts.vault'), 'utf8')).toBe('{invalid')
 })
 test('UI state contains codes and labels but no secrets or raw request payloads', () => {
   const s = service()
@@ -69,10 +70,10 @@ test('manual add, duplicate detection and removal work without touching disk in 
   expect(s.state.accounts).toHaveLength(3)
   expect(readdirSync(dir)).toEqual([])
 })
-test('real local persistence round-trips the original file format without a service process', async () => {
+test('local persistence encrypts secrets and reopens without a service process', async () => {
   const dir = directory(), s = service(false, dir)
   await s.call('add', { name: 'local', secret: 'GEZDGNBVGY3TQOJQ' })
-  expect(loadAccounts(dir)).toEqual([{ name: 'local', seed: 'GEZDGNBVGY3TQOJQ' }])
+  expect(new Vault(dir, Buffer.alloc(32, 7)).read<unknown>('accounts', [])).toEqual([{ name: 'local', seed: 'GEZDGNBVGY3TQOJQ' }])
   const reopened = service(false, dir)
   expect(reopened.state.accounts[0]!.name).toBe('local')
 })

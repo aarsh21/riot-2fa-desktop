@@ -1,12 +1,14 @@
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { accountId, extractSecret, totp } from './services/totp'
-import { dataDirectory, loadAccounts, readJson, writeJson, type SavedAccount } from './services/storage'
+import { dataDirectory, validateAccounts, readJson, writeJson, type SavedAccount } from './services/storage'
+import { Vault } from './services/vault'
 import * as riot from './services/riot'
 import { BrowserLogin } from './services/browser'
 import { captureQr, notifySignIn, readClipboard, systemDark, writeClipboard } from './services/platform'
 import { PushClient } from './services/push'
-import { WindowsSnapshots, type SnapshotEvent } from './services/windows-snapshots'
+import type { SnapshotEvent } from './services/windows-snapshots'
+import { Snapshots } from './services/shortcuts'
 
 export type Account = { id: string; name: string; code: string | null; qrEnabled: boolean }
 export type LoginRequest = { id: string; accountId: string; name: string; time: number | string | null; location: string; demo?: boolean }
@@ -39,20 +41,21 @@ export class AccountService {
   private lastRegisteredToken = ''
   private themeDark = true
   private pushStatus = 'Starting listener'
-  private snapshots = new WindowsSnapshots()
+  private snapshots = new Snapshots()
   private snapshotsEnabled = false
   private snapshotStatus = 'Off'
   private latestSnapshot: State['snapshot'] = null
   private captureController: AbortController | null = null
 
-  constructor(private demo: boolean, private directory = dataDirectory(), live = true) {
+  constructor(private demo: boolean, private directory = dataDirectory(), live = true, private vault?: Vault, startupError?: string) {
     try {
+      if (!demo && !vault) throw new Error(startupError || 'The encrypted vault is unavailable. Reopen the app after unlocking your OS credential store.')
       this.accounts = demo ? [
         { name: 'alex#EUW', seed: 'JBSWY3DPEHPK3PXP', sso: { demo: 'true' } },
         { name: 'alex#NA1', seed: 'KRUGS4ZANFZSAYJA' },
         { name: 'weekend#EUW', seed: 'MFRGGZDFMZTWQ2LK' },
-      ] : loadAccounts(directory)
-    } catch { this.error = 'Account storage could not be read. Repair or restore accounts.json before adding accounts.' }
+      ] : validateAccounts(vault!.read('accounts', []))
+    } catch (error) { this.error = error instanceof Error ? error.message : 'Account storage could not be read.' }
     if (demo) {
       this.pushStatus = 'Demo session'
       this.requests.set('demo-request', { id: 'demo-request', accountId: accountId(this.accounts[0]!), name: 'alex#EUW', time: Date.now(), location: 'Demo request', demo: true })
@@ -61,13 +64,13 @@ export class AccountService {
     this.timer = setInterval(() => this.emit(), 1000)
     if (!demo && live) {
       try {
-        this.snapshotsEnabled = process.platform === 'win32' && readJson<{ snapshotsEnabled?: boolean }>(join(directory, 'preferences.json'), {}).snapshotsEnabled === true
+        this.snapshotsEnabled = readJson<{ snapshotsEnabled?: boolean }>(join(directory, 'preferences.json'), {}).snapshotsEnabled === true
         if (this.snapshotsEnabled) this.startSnapshots()
       } catch { this.snapshotStatus = 'Could not read shortcut preference' }
       const appearance = async () => { this.themeDark = await systemDark(); if (!this.stopped) this.emit() }
       void appearance(); this.appearanceTimer = setInterval(() => void appearance(), 30000)
       if (!this.error) {
-        this.push = new PushClient(directory, data => this.onPush(data), status => { this.pushStatus = status; this.emit() }, token => { void this.registerExisting(token) })
+        this.push = new PushClient(this.vault!, data => this.onPush(data), status => { this.pushStatus = status; this.emit() }, token => { void this.registerExisting(token) })
         void this.push.start()
       }
     }
@@ -86,7 +89,7 @@ export class AccountService {
   private commit(next: SavedAccount[]) {
     if (this.error) throw new riot.ServiceError(this.error)
     if (!this.demo) {
-      try { writeJson(join(this.directory, 'accounts.json'), next, this.directory) }
+      try { this.vault!.write('accounts', next) }
       catch { throw new riot.ServiceError('Could not save account data. Check free disk space and folder permissions. The previous account file has been preserved.') }
     }
     this.accounts = next
@@ -138,7 +141,6 @@ export class AccountService {
           finally { this.captureController = null }
         }
         case 'snapshots': {
-          if (process.platform !== 'win32' && !this.demo) throw new riot.ServiceError('The global shortcut is available on Windows. Use Capture region on this desktop.')
           const enabled = params.enabled === true
           if (!this.demo) writeJson(join(this.directory, 'preferences.json'), { snapshotsEnabled: enabled }, this.directory)
           this.snapshotsEnabled = enabled

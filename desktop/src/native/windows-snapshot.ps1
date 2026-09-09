@@ -61,23 +61,63 @@ try {
       }
     }
     'region' {
-      $sequence = [SnapshotNative]::GetClipboardSequenceNumber()
-      Start-Process 'ms-screenclip:'
-      $deadline = [DateTime]::UtcNow.AddSeconds(60)
-      while ([DateTime]::UtcNow -lt $deadline) {
-        Start-Sleep -Milliseconds 100
-        if ([SnapshotNative]::GetClipboardSequenceNumber() -eq $sequence) { continue }
-        try { $image = [System.Windows.Forms.Clipboard]::GetImage() } catch { continue }
-        if ($null -ne $image) {
-          try {
-            $file = [Guid]::NewGuid().ToString() + '.png'
-            $image.Save((Join-Path $env:RIOT2FA_SNAPSHOT_DIR $file), [System.Drawing.Imaging.ImageFormat]::Png)
-            Emit @{ type = 'capture'; file = $file }
-          } finally { $image.Dispose() }
-          exit 0
-        }
-      }
-      Emit @{ type = 'cancelled' }
+      $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
+      if (([long]$bounds.Width * $bounds.Height) -gt 40000000) { throw 'Display is too large' }
+      $desktop = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
+      $graphics = [System.Drawing.Graphics]::FromImage($desktop)
+      $overlay = New-Object System.Windows.Forms.Form
+      try {
+        $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
+        $overlay.FormBorderStyle = 'None'
+        $overlay.StartPosition = 'Manual'
+        $overlay.Bounds = $bounds
+        $overlay.TopMost = $true
+        $overlay.ShowInTaskbar = $false
+        $overlay.KeyPreview = $true
+        $overlay.Cursor = [System.Windows.Forms.Cursors]::Cross
+        $overlay.BackgroundImage = $desktop
+        $overlay.BackgroundImageLayout = 'None'
+        $script:selectionStart = $null
+        $script:selectionEnd = $null
+        $script:selectionResult = $null
+        $overlay.Add_KeyDown({ if ($_.KeyCode -eq 'Escape') { $this.Close() } })
+        $overlay.Add_MouseDown({
+          if ($_.Button -eq 'Right') { $this.Close(); return }
+          $script:selectionStart = $_.Location; $script:selectionEnd = $_.Location
+          $this.Capture = $true
+        })
+        $overlay.Add_MouseMove({ if ($null -ne $script:selectionStart) { $script:selectionEnd = $_.Location; $this.Invalidate() } })
+        $overlay.Add_Paint({
+          if ($null -eq $script:selectionStart) { return }
+          $x = [Math]::Min($script:selectionStart.X, $script:selectionEnd.X)
+          $y = [Math]::Min($script:selectionStart.Y, $script:selectionEnd.Y)
+          $w = [Math]::Abs($script:selectionStart.X - $script:selectionEnd.X)
+          $h = [Math]::Abs($script:selectionStart.Y - $script:selectionEnd.Y)
+          $_.Graphics.DrawRectangle([System.Drawing.Pens]::White, $x, $y, $w, $h)
+          if ($w -gt 2 -and $h -gt 2) { $_.Graphics.DrawRectangle([System.Drawing.Pens]::Black, $x + 1, $y + 1, $w - 2, $h - 2) }
+        })
+        $overlay.Add_MouseUp({
+          if ($null -eq $script:selectionStart -or $_.Button -ne 'Left') { return }
+          $script:selectionResult = [System.Drawing.Rectangle]::FromLTRB(
+            [Math]::Min($script:selectionStart.X, $_.X), [Math]::Min($script:selectionStart.Y, $_.Y),
+            [Math]::Max($script:selectionStart.X, $_.X), [Math]::Max($script:selectionStart.Y, $_.Y))
+          $this.Close()
+        })
+        $timeout = New-Object System.Windows.Forms.Timer
+        $timeout.Interval = 60000
+        $timeout.Add_Tick({ $overlay.Close() })
+        $timeout.Start()
+        try { [void]$overlay.ShowDialog() } finally { $timeout.Stop(); $timeout.Dispose() }
+        if ($null -eq $script:selectionResult) { Emit @{ type = 'cancelled' }; exit 0 }
+        $selection = [System.Drawing.Rectangle]::Intersect($script:selectionResult, (New-Object System.Drawing.Rectangle(0, 0, $bounds.Width, $bounds.Height)))
+        if ($selection.Width -lt 2 -or $selection.Height -lt 2) { Emit @{ type = 'cancelled' }; exit 0 }
+        $image = $desktop.Clone($selection, $desktop.PixelFormat)
+        try {
+          $file = [Guid]::NewGuid().ToString() + '.png'
+          $image.Save((Join-Path $env:RIOT2FA_SNAPSHOT_DIR $file), [System.Drawing.Imaging.ImageFormat]::Png)
+          Emit @{ type = 'capture'; file = $file }
+        } finally { $image.Dispose() }
+      } finally { $overlay.Dispose(); $graphics.Dispose(); $desktop.Dispose() }
     }
     'selftest' {
       $form = New-Object System.Windows.Forms.Form

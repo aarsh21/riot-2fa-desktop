@@ -6,15 +6,18 @@ import { WindowsSnapshots } from './windows-snapshots'
 import { ServiceError } from './riot'
 
 function tool(name: string) { const bundled = join(dirname(process.execPath), 'tools', name); return existsSync(bundled) ? bundled : name }
-async function run(args: string[], input?: string, env = process.env): Promise<string> {
+async function run(args: string[], input?: string, env = process.env, signal?: AbortSignal): Promise<string> {
+  if (signal?.aborted) throw new ServiceError('Capture cancelled.')
   const child = Bun.spawn(args, { stdin: input === undefined ? 'ignore' : 'pipe', stdout: input === undefined ? 'pipe' : 'ignore', stderr: 'ignore', env, windowsHide: true })
   if (input !== undefined && child.stdin) { child.stdin.write(input); child.stdin.end() }
+  const abort = () => child.kill()
+  signal?.addEventListener('abort', abort, { once: true })
   const timer = setTimeout(() => child.kill(), 30000)
   try {
     const [text, code] = await Promise.all([child.stdout ? new Response(child.stdout).text() : Promise.resolve(''), child.exited])
     if (code !== 0) throw new Error('Platform command failed')
     return text.trimEnd()
-  } finally { clearTimeout(timer) }
+  } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort) }
 }
 const ps = (script: string) => ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script]
 export async function readClipboard(): Promise<string> {
@@ -42,13 +45,13 @@ export async function captureQr(signal?: AbortSignal): Promise<string> {
   const temporary = mkdtempSync(join(tmpdir(), 'riot2fa-qr-'))
   const path = join(temporary, 'capture.png')
   try {
-    if (process.platform === 'darwin') await run(['screencapture', '-x', '-i', path])
+    if (process.platform === 'darwin') await run(['screencapture', '-x', '-i', path], undefined, process.env, signal)
     else if (process.env.WAYLAND_DISPLAY) {
-      const region = await run([tool('slurp')])
+      const region = await run([tool('slurp')], undefined, process.env, signal)
       if (!/^-?\d+,-?\d+ \d+x\d+$/.test(region)) throw new Error('No selection')
-      await run([tool('grim'), '-g', region, path])
+      await run([tool('grim'), '-g', region, path], undefined, process.env, signal)
     } else {
-      await run([tool('import'), '-window', 'root', path])
+      await run([tool('import'), path], undefined, process.env, signal)
     }
     return decodeQrImage(readFileSync(path))
   } catch (error) {
