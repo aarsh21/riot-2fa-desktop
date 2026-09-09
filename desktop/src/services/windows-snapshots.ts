@@ -29,13 +29,13 @@ export class WindowsSnapshots {
     let stopped = false, buffer = '', heartbeat = Date.now()
     let child: ReturnType<typeof Bun.spawn>
     try {
-      child = Bun.spawn(['powershell.exe', '-NoLogo', '-NoProfile', '-NonInteractive', '-STA', '-EncodedCommand', Buffer.from(script).toString('base64')], {
+      child = Bun.spawn(['powershell.exe', '-NoLogo', '-NoProfile', '-NonInteractive', '-STA', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
         env: { ...process.env, RIOT2FA_SNAPSHOT_MODE: mode, RIOT2FA_SNAPSHOT_DIR: directory, RIOT2FA_SNAPSHOT_FIXTURE: fixture || '', RIOT2FA_PARENT_PID: String(process.pid) },
         stdin: 'ignore', stdout: 'pipe', stderr: 'ignore', windowsHide: true,
       })
     } catch {
       rmSync(directory, { recursive: true, force: true })
-      onEvent({ error: 'Windows screen capture could not start.' }); return
+      onEvent({ error: 'Windows screen capture could not start.', status: 'Unavailable' }); return
     }
     const finish = () => {
       if (stopped) return
@@ -45,7 +45,7 @@ export class WindowsSnapshots {
     }
     this.stopCurrent = finish
     const timer = setInterval(() => {
-      if (Date.now() - heartbeat > (mode === 'watch' ? 15000 : 70000)) { onEvent({ error: 'Screen capture timed out. Try again.' }); finish() }
+      if (Date.now() - heartbeat > (mode === 'watch' ? 15000 : 70000)) { onEvent({ error: 'Screen capture timed out. Try again.', status: 'Unavailable' }); finish() }
     }, 1000)
     const handle = (line: string) => {
       if (stopped) return
@@ -73,10 +73,10 @@ export class WindowsSnapshots {
           let newline: number
           while ((newline = buffer.indexOf('\n')) >= 0) { const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1); handle(line) }
         }
-      } catch { if (!stopped) onEvent({ error: 'Screen capture stopped unexpectedly.' }) }
+      } catch { if (!stopped) onEvent({ error: 'Screen capture stopped unexpectedly.', status: 'Unavailable' }) }
       finally {
         reader.releaseLock()
-        if (!stopped) { onEvent({ error: 'Screen capture stopped. Enable it again to retry.' }); finish() }
+        if (!stopped) { onEvent({ error: 'Screen capture stopped. Enable it again to retry.', status: 'Unavailable' }); finish() }
       }
     })()
   }
