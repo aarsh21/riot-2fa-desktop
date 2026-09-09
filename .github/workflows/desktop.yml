@@ -2,6 +2,7 @@ name: Native desktop
 on:
   workflow_dispatch:
   push:
+    branches: ['main']
     tags: ['desktop-v*']
     paths: ['desktop/**', '.github/workflows/desktop.yml']
   pull_request:
