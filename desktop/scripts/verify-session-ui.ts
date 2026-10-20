@@ -20,9 +20,8 @@ const start = () => {
   child.stderr.on('data', chunk => process.stderr.write(chunk))
   return connectStdio({ write: chunk => { child.stdin.write(chunk) }, feed: listener => { child.stdout.on('data', chunk => listener(chunk.toString())) }, close: async () => { child.kill(); await new Promise<void>(resolve => child.once('exit', () => resolve())) } })
 }
-// A cold software renderer can exceed the renderer's two-second bounds-query
-// limit before its first frame. Retry only startup readiness; interaction and
-// data assertions below still fail normally.
+// Wait for a painted frame before starting recovery interactions. Retry only
+// startup readiness; interaction and data assertions below still fail normally.
 async function waitForFirstFrame(app: App) {
   const deadline = Date.now() + 30000
   let last: unknown

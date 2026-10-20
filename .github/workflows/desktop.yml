@@ -63,6 +63,7 @@ jobs:
         if: runner.os == 'Linux'
         env:
           LIBGL_ALWAYS_SOFTWARE: '1'
+          RUST_LOG: gpui_linux=info,gpui_wgpu=info
         run: xvfb-run --auto-servernum --server-args='-screen 0 1280x900x24' sh -c 'openbox > /tmp/riot-openbox.log 2>&1 & bun run verify:session'
       - name: Save session verification evidence
         if: always()

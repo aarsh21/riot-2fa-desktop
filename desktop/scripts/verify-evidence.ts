@@ -28,7 +28,7 @@ try {
     await check('live-push', ['bun', 'scripts/verify-live-push.ts', '--register-this-test-device', '--delete-test-registration'])
   }
   await check('packaged-ui', ['bun', 'scripts/verify.ts', '--no-captures'], { ...process.env, RIOT2FA_VERIFY_BINARY: binary })
-  const sourceFiles = ['package.json', 'src/services/push.ts', 'src/services/push.test.ts', 'patches/@eneris%2Fpush-receiver@4.3.1.patch', 'scripts/live-qr-ui.tsx', 'scripts/verify-live-qr.ts', 'scripts/verify-live-push.ts', 'src/service.ts', 'src/ui.tsx', 'src/services/riot.ts', 'src/services/browser.ts', 'src/services/storage.ts', 'src/services/totp.ts', 'src/services/session.test.ts', 'scripts/verify.ts', 'scripts/session-ui-fixture.tsx', 'scripts/verify-session-ui.ts', 'scripts/verify-login.ts', 'scripts/verify-evidence.ts', 'bun.lock']
+  const sourceFiles = ['package.json', 'scripts/prepare-renderer.ts', 'src/services/push.ts', 'src/services/push.test.ts', 'patches/@eneris%2Fpush-receiver@4.3.1.patch', 'scripts/live-qr-ui.tsx', 'scripts/verify-live-qr.ts', 'scripts/verify-live-push.ts', 'src/service.ts', 'src/ui.tsx', 'src/services/riot.ts', 'src/services/browser.ts', 'src/services/storage.ts', 'src/services/totp.ts', 'src/services/session.test.ts', 'scripts/verify.ts', 'scripts/session-ui-fixture.tsx', 'scripts/verify-session-ui.ts', 'scripts/verify-login.ts', 'scripts/verify-evidence.ts', 'bun.lock']
   const captures = ['desktop-dark', 'desktop-light', 'compact-dark', 'requests-dark', 'approval-dark', 'add-error-dark', 'qr-dark', 'settings-dark'].map(name => resolve(root, `../.impeccable/review/${name}.png`)).filter(existsSync)
   const unit = readFileSync(join(output, 'unit.log'), 'utf8')
   const liveRecord = (name: string) => {
