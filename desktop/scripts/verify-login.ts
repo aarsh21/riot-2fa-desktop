@@ -1,9 +1,11 @@
 // Offline browser integration check. Every browser request is intercepted.
 import assert from 'node:assert/strict'
 import { resolve } from 'node:path'
+import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { BrowserLogin } from '../src/services/browser'
-process.env.PLAYWRIGHT_BROWSERS_PATH = resolve(import.meta.dir, '../.native-browsers')
+const browserPath = resolve(import.meta.dir, '../.native-browsers')
+if (!process.env.PLAYWRIGHT_BROWSERS_PATH && existsSync(browserPath)) process.env.PLAYWRIGHT_BROWSERS_PATH = browserPath
 const require = createRequire(import.meta.url)
 const { chromium } = require('patchright') as typeof import('patchright')
 const original = chromium.launchPersistentContext.bind(chromium)

@@ -1,8 +1,241 @@
+diff --git a/node_modules/@eneris/push-receiver/.bun-tag-1bd2a526a07c164c b/.bun-tag-1bd2a526a07c164c
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/node_modules/@eneris/push-receiver/.bun-tag-435a69f659ba71e9 b/.bun-tag-435a69f659ba71e9
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
 diff --git a/node_modules/@eneris/push-receiver/.bun-tag-6569b35536da8e1d b/.bun-tag-6569b35536da8e1d
 new file mode 100644
 index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/node_modules/@eneris/push-receiver/.bun-tag-76b399211d8a9d1a b/.bun-tag-76b399211d8a9d1a
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/node_modules/@eneris/push-receiver/.bun-tag-e518101254455442 b/.bun-tag-e518101254455442
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/node_modules/@eneris/push-receiver/.bun-tag-e51918090183485e b/.bun-tag-e51918090183485e
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/dist/client.js b/dist/client.js
+index f695e68291c93b57cc774b5dd6557d363f6a9a82..bece84f8794e1a04bdd4afeb243d25e7f1ca4c9e 100644
+--- a/dist/client.js
++++ b/dist/client.js
+@@ -41,7 +41,7 @@ const long_1 = __importDefault(require("long"));
+ const protobufjs_1 = __importDefault(require("protobufjs"));
+ const tls_1 = __importDefault(require("tls"));
+ const gcm_1 = __importStar(require("./gcm"));
+-const fcm_1 = __importDefault(require("./fcm"));
++const fcm_1 = __importStar(require("./fcm"));
+ const keys_1 = __importDefault(require("./keys"));
+ const parser_1 = __importDefault(require("./parser"));
+ const decrypt_1 = __importDefault(require("./utils/decrypt"));
+@@ -57,6 +57,7 @@ const PORT = 5228;
+ const MAX_RETRY_TIMEOUT = 15;
+ class PushReceiver extends emitter_1.default {
+     #config;
++    #generation = 0;
+     #socket;
+     #retryCount = 0;
+     #retryTimeout;
+@@ -103,15 +104,16 @@ class PushReceiver extends emitter_1.default {
+     connect = async () => {
+         if (this.#socket)
+             return;
++        const generation = this.#generation;
+         await this.registerIfNeeded();
++        if (generation !== this.#generation) return;
+         logger_1.default.debug('connect');
+         this.#lastStreamIdReported = -1;
+-        this.#socket = new tls_1.default.TLSSocket(null);
++        this.#socket = tls_1.default.connect({ host: HOST, port: PORT, servername: HOST, rejectUnauthorized: true });
+         this.#socket.setKeepAlive(true);
+-        this.#socket.on('connect', () => this.#handleSocketConnect());
++        this.#socket.on('secureConnect', () => this.#handleSocketConnect());
+         this.#socket.on('close', () => this.#handleSocketClose());
+         this.#socket.on('error', (err) => this.#handleSocketError(err));
+-        this.#socket.connect({ host: HOST, port: PORT });
+         this.#parser = new parser_1.default(this.#socket);
+         this.#parser.on('message', (data) => this.#handleMessage(data));
+         this.#parser.on('error', (err) => this.#handleParserError(err));
+@@ -124,6 +126,7 @@ class PushReceiver extends emitter_1.default {
+         });
+     };
+     destroy = () => {
++        this.#generation++;
+         this.#clearReady();
+         clearTimeout(this.#retryTimeout);
+         this.#clearHeartbeat();
+@@ -156,14 +159,34 @@ class PushReceiver extends emitter_1.default {
+         if (!credentials.config)
+             return false;
+         // Config data
+-        if (JSON.stringify(credentials.config) !== JSON.stringify(this.#configMetaData))
++        if (['bundleId', 'projectId', 'vapidKey'].some(key => credentials.config[key] !== this.#configMetaData[key]))
+             return false;
+         return true;
+     }
+     async registerIfNeeded() {
+         if (this.checkCredentials(this.#config.credentials)) {
+-            await (0, gcm_1.checkIn)(this.#config);
+-            return this.#config.credentials;
++            const previous = this.#config.credentials;
++            const checked = await (0, gcm_1.checkIn)(this.#config);
++            let fcm = previous.fcm;
++            const installation = fcm.installation;
++            const expiresAt = installation.createdAt + installation.expiresIn;
++            if (!Number.isFinite(expiresAt) || expiresAt <= Date.now() + 60000) {
++                let renewed;
++                try {
++                    renewed = installation.refreshToken && installation.fid
++                        ? await (0, fcm_1.refreshFCMInstallationToken)(installation, this.#config)
++                        : await (0, fcm_1.installFCM)(this.#config);
++                } catch (error) {
++                    if (error.status !== 401 && error.status !== 404) throw error;
++                    renewed = await (0, fcm_1.installFCM)(this.#config);
++                }
++                const registered = await (0, fcm_1.registerFCM)({ ...previous.gcm, ...checked }, renewed, previous.keys, this.#config);
++                fcm = { token: registered.token, installation: renewed };
++            }
++            const credentials = { ...previous, gcm: { ...previous.gcm, ...checked }, fcm };
++            this.#config.credentials = credentials;
++            this.emit('ON_CREDENTIALS_CHANGE', { oldCredentials: previous, newCredentials: credentials });
++            return credentials;
+         }
+         const keys = await (0, keys_1.default)();
+         const gcm = await (0, gcm_1.default)(this.#config);
+@@ -218,7 +241,7 @@ class PushReceiver extends emitter_1.default {
+     #socketRetry() {
+         this.destroy();
+         const timeout = Math.min(++this.#retryCount, MAX_RETRY_TIMEOUT) * 1000;
+-        this.#retryTimeout = setTimeout(() => this.connect(), timeout);
++        this.#retryTimeout = setTimeout(() => { void this.connect().catch(() => this.#socketRetry()); }, timeout);
+     }
+     #getStreamId() {
+         this.#lastStreamIdReported = this.#streamId;
+@@ -308,6 +331,11 @@ class PushReceiver extends emitter_1.default {
+         this.#startHeartbeat();
+         switch (tag) {
+             case constants_1.MCSProtoTag.kLoginResponseTag:
++                if (object.error) {
++                    logger_1.default.warn('MCS authentication was refused');
++                    this.#socketRetry();
++                    break;
++                }
+                 // clear persistent ids, as we just sent them to the server while logging in
+                 this.#config.persistentIds = [];
+                 this.emit('ON_READY');
+diff --git a/dist/fcm.d.ts b/dist/fcm.d.ts
+index bb94b1d815004a585cc1513415b8f048aaf253cf..36b26fd5bf01962c60637d5f738f2c9a7a0fd99c 100644
+--- a/dist/fcm.d.ts
++++ b/dist/fcm.d.ts
+@@ -2,3 +2,5 @@ import type * as Types from './types';
+ export declare function installFCM(config: Types.ClientConfig): Promise<Types.InstallationData>;
+ export declare function registerFCM(gcmData: Types.GcmData, installation: Types.InstallationData, keys: Types.Keys, config: Types.ClientConfig): Promise<Types.FcmRegistrationResponse>;
+ export default function register(gcm: Types.GcmData, keys: Types.Keys, config: Types.ClientConfig): Promise<Types.FcmData>;
++
++export declare function refreshFCMInstallationToken(installation: Types.InstallationData, config: Types.ClientConfig): Promise<Types.InstallationData>;
+diff --git a/dist/fcm.js b/dist/fcm.js
+index a4c6f9a85bf33f2571709feb2f5b615f2116e588..5f56426f66e3727d5c6fa19e45d07604e34063e5 100644
+--- a/dist/fcm.js
++++ b/dist/fcm.js
+@@ -46,6 +46,12 @@ const FCM_REGISTRATION = 'https://fcmregistrations.googleapis.com/v1/';
+ const FCM_INSTALLATION = 'https://firebaseinstallations.googleapis.com/v1/';
+ const AUTH_VERSION = 'FIS_v2';
+ const SDK_VERSION = 'w:0.6.6';
++function androidIdentity(config) {
++    return config.firebase.androidPackage && config.firebase.androidCert ? {
++        'X-Android-Package': config.firebase.androidPackage,
++        'X-Android-Cert': config.firebase.androidCert,
++    } : {};
++}
+ // TODO: FIXME it is optional to send it but better to implement proper heatbeat in the future
+ const getEmptyHeatbeat = () => btoa(JSON.stringify({ heartbeats: [], version: 2 })).toString();
+ function generateFirebaseFID() {
+@@ -59,29 +65,28 @@ function generateFirebaseFID() {
+ function encodeBase64URL(value) {
+     return String(value).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+ }
+-// TODO: Installation token expires after 7 days. It should be refreshed but requests are failing (404)
+-// export async function refreshFCMInstallationToken(fcmData: Types.FcmData, config: Types.ClientConfig) {
+-//     const response = await request(getEndpoint(config, FCM_INSTALLATION, `${fcmData.fid}/authTokens:generate`), {
+-//         method: 'POST',
+-//         headers: new Headers({
+-//             Authorization: `${AUTH_VERSION} ${fcmData.refreshToken}`,
+-//             'x-firebase-client': getEmptyHeatbeat(),
+-//         }),
+-//         body: JSON.stringify({
+-//             installation: {
+-//                 sdkVersion: SDK_VERSION,
+-//                 appId: config.firebase.appId,
+-//             }
+-//         })
+-//     })
+-//     const data = await response.json()
+-//     return data
+-// }
++exports.refreshFCMInstallationToken = refreshFCMInstallationToken;
++async function refreshFCMInstallationToken(installation, config) {
++    const response = await (0, request_1.default)((0, request_1.getEndpoint)(config, FCM_INSTALLATION, `installations/${encodeURIComponent(installation.fid)}/authTokens:generate`), {
++        method: 'POST',
++        headers: {
++            ...androidIdentity(config),
++            'Content-Type': 'application/json',
++            'x-goog-api-key': config.firebase.apiKey,
++            Authorization: `${AUTH_VERSION} ${installation.refreshToken}`,
++        },
++        body: JSON.stringify({ installation: { sdkVersion: SDK_VERSION, appId: config.firebase.appId } }),
++    });
++    const data = await response.json();
++    if (!data.token || !Number.isFinite(Number.parseInt(data.expiresIn)) || Number.parseInt(data.expiresIn) <= 0) throw new Error('Invalid installation token response');
++    return { ...installation, token: data.token, createdAt: Date.now(), expiresIn: Number.parseInt(data.expiresIn) * 1000 };
++}
+ async function installFCM(config) {
+     const response = await (0, request_1.default)((0, request_1.getEndpoint)(config, FCM_INSTALLATION, 'installations'), {
+         method: 'POST',
+         headers: {
+             'x-firebase-client': getEmptyHeatbeat(),
++            ...androidIdentity(config),
+             'x-goog-api-key': config.firebase.apiKey
+         },
+         body: JSON.stringify({
+@@ -104,6 +109,7 @@ async function registerFCM(gcmData, installation, keys, config) {
+     const requestOptions = {
+         method: 'POST',
+         headers: {
++            ...androidIdentity(config),
+             'x-goog-api-key': config.firebase.apiKey,
+             'x-goog-firebase-installations-auth': installation.token,
+         },
+diff --git a/dist/types.d.ts b/dist/types.d.ts
+index 959157da3d1244559e7ff7d1cfdee3b5a9de024e..864e1f921948d83864b7790acddc71d42029aa78 100644
+--- a/dist/types.d.ts
++++ b/dist/types.d.ts
+@@ -95,6 +95,9 @@ export interface DataPacket<T = any> {
+     object: T;
+ }
+ export interface FirebaseConfig {
++    /** Android API-key restriction metadata for Firebase REST requests. */
++    androidPackage?: string;
++    androidCert?: string;
+     projectId: string;
+     appId: string;
+     apiKey: string;
+diff --git a/dist/utils/defer.js b/dist/utils/defer.js
+index 1e805ea2d887f2d0523fa148915dcb2baee25d70..5772b2d778bd40f60f1702627c6ba00fe61e5b90 100644
+--- a/dist/utils/defer.js
++++ b/dist/utils/defer.js
+@@ -15,6 +15,8 @@ function defer() {
+             rej(reason);
+         };
+     });
++    // Optional readiness observers must not turn a disconnect into an unhandled rejection.
++    promise.catch(() => {});
+     return { promise, resolve, reject, isResolved };
+ }
+ //# sourceMappingURL=defer.js.map
+\ No newline at end of file
 diff --git a/dist/utils/request.js b/dist/utils/request.js
-index 89f592f44d6fdd773cea5cd3780c8353f3a1b346..c4051ee7c1c5d942000793762adb5f122bc66d23 100644
+index 89f592f44d6fdd773cea5cd3780c8353f3a1b346..3459a9304bf8e22819a1e4822f194ebb3d119f0b 100644
 --- a/dist/utils/request.js
 +++ b/dist/utils/request.js
 @@ -11,31 +11,25 @@ const logger_1 = __importDefault(require("./logger"));
@@ -42,7 +275,7 @@ index 89f592f44d6fdd773cea5cd3780c8353f3a1b346..c4051ee7c1c5d942000793762adb5f12
 +            if (response.status >= 400 && response.status < 500 && response.status !== 429) {
 +                const data = await response.json().catch(() => ({}));
 +                const restricted = data.error?.details?.some(detail => detail.reason === "API_KEY_ANDROID_APP_BLOCKED");
-+                throw Object.assign(new Error("Push registration was refused"), { code: restricted ? "ANDROID_ONLY" : "REFUSED" });
++                throw Object.assign(new Error("Push registration was refused"), { code: restricted ? "ANDROID_ONLY" : "REFUSED", status: response.status });
 +            }
 +        } catch (error) {
 +            if (error.message === "Push registration was refused") throw error;

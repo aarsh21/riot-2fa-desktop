@@ -18,7 +18,7 @@ export class WindowsSnapshots {
           signal?.removeEventListener('abort', abort)
           this.close()
           if (event.url) resolve(event.url)
-          else reject(new ServiceError(event.error))
+          else reject(new ServiceError(event.error || 'Screen capture failed.'))
         }
       }, fixture)
     })

@@ -3,7 +3,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 
-export type SavedAccount = { name: string; seed: string; puuid?: string; sso?: Record<string, string>; access_token?: string }
+export type SavedAccount = { name: string; seed: string; puuid?: string; sso?: Record<string, string>; access_token?: string; sessionExpired?: boolean; verification?: 'pending' | 'verified' | 'rejected'; verifiedAt?: number }
 export function dataDirectory(platform = process.platform, env = process.env, home = homedir()) {
   if (env.RIOT2FA_DATA_DIR) return env.RIOT2FA_DATA_DIR
   const base = platform === 'win32' ? env.APPDATA || join(home, 'AppData', 'Roaming') : platform === 'darwin' ? join(home, 'Library', 'Application Support') : env.XDG_DATA_HOME || join(home, '.local', 'share')

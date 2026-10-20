@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { createRequire } from 'node:module'
 import type { BrowserContext, Cookie } from 'patchright'
-import { ServiceError } from './riot'
+import { ServiceError, SSO_COOKIE_NAMES } from './riot'
+export { SSO_COOKIE_NAMES } from './riot'
 
-export const SSO_COOKIE_NAMES = ['ssid', 'clid', 'csid', 'tdid', 'sub', 'ccid', 'asid']
 export function cookiesForHost(cookies: Cookie[], host: string) {
   return Object.fromEntries(cookies.filter(c => host === c.domain.replace(/^\./, '') || host.endsWith('.' + c.domain.replace(/^\./, ''))).sort((a, b) => a.domain.length - b.domain.length).map(c => [c.name, c.value]))
 }
