@@ -18,6 +18,7 @@ const head = await new Response(Bun.spawn(['git', 'rev-parse', 'HEAD'], { cwd: s
 if (head.trim() !== revision) throw new Error('GPUIx checkout does not match the pinned revision')
 await run(['git', 'submodule', 'update', '--init', '--recursive', '--depth', '1'])
 await run(['bun', 'install', '--frozen-lockfile', '--ignore-scripts'])
+if (process.argv.includes('--checkout-only')) process.exit(0)
 await run(['cargo', 'build', '--release', '--locked', ...(process.platform === 'linux' ? ['--no-default-features'] : ['--features', 'test-support'])], join(source, 'packages/native'))
 await run(['bun', 'run', 'build'], join(source, 'packages/react'))
 const target = process.env.CARGO_TARGET_DIR || join(source, 'packages/native/target')

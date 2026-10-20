@@ -25,4 +25,4 @@ globalThis.fetch = (async (input: unknown) => {
 const service = new AccountService(false, directory, false, vault)
 process.on('SIGTERM', () => { service.close(); process.exit(0) })
 await prepareFonts()
-render(<App service={service} />, { title: 'Riot 2FA · Session test', width: 1080, height: 760, windowBackground: 'opaque', focus: false })
+render(<App service={service} />, { title: 'Riot 2FA · Session test', width: 1080, height: 760, windowBackground: 'opaque', focus: process.env.CI === 'true' })

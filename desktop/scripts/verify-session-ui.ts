@@ -1,4 +1,4 @@
-import { connectStdio, type App } from '@gpuix/react/automation'
+import { AutomationError, connectStdio, type App } from '@gpuix/react/automation'
 import { mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -20,10 +20,27 @@ const start = () => {
   child.stderr.on('data', chunk => process.stderr.write(chunk))
   return connectStdio({ write: chunk => { child.stdin.write(chunk) }, feed: listener => { child.stdout.on('data', chunk => listener(chunk.toString())) }, close: async () => { child.kill(); await new Promise<void>(resolve => child.once('exit', () => resolve())) } })
 }
+// A cold software renderer can exceed the renderer's two-second bounds-query
+// limit before its first frame. Retry only startup readiness; interaction and
+// data assertions below still fail normally.
+async function waitForFirstFrame(app: App) {
+  const deadline = Date.now() + 30000
+  let last: unknown
+  while (Date.now() < deadline) {
+    try { await app.getByText('primary#TEST').waitFor({ timeoutMs: 1000 }); return }
+    catch (error) {
+      if (!(error instanceof AutomationError) || error.code !== 'Timeout' && !(error.code === 'Protocol' && error.message.includes('waiting for the automation bounds query'))) throw error
+      last = error
+      await Bun.sleep(100)
+    }
+  }
+  throw last || new Error('The native window did not paint its first frame')
+}
 let app: App | undefined
 try {
   app = await start()
-  await app.getByText('QR access needs reconnection').waitFor({ timeoutMs: 20000 })
+  await waitForFirstFrame(app)
+  await app.getByText('QR access needs reconnection').waitFor()
   await app.getByText('secondary#TEST').waitFor()
   await app.getByTestId(`reconnect-${id}`).press('enter')
   await app.getByText('QR session active').waitFor()
@@ -36,7 +53,8 @@ try {
   const calls = JSON.parse(readFileSync(join(directory, 'calls.json'), 'utf8')) as string[]
   assert.deepEqual(calls, ['/api/account/v1/user', '/api/v1/authorization', '/mfa/v1/factor/riotmobile/verify'])
   await app.close(); app = await start()
-  await app.getByText('QR session active').waitFor({ timeoutMs: 20000 })
+  await waitForFirstFrame(app)
+  await app.getByText('QR session active').waitFor()
   await app.getByTestId(`copy-${id}`).press('enter')
   await app.getByText('Copied').waitFor()
   assert.equal(await app.getByText('secondary#TEST').count(), 1)
