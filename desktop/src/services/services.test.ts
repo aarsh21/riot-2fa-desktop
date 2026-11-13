@@ -52,7 +52,8 @@ test('corrupt account storage is not silently replaced', async () => {
 test('UI state contains codes and labels but no secrets or raw request payloads', () => {
   const s = service()
   expect(s.state.accounts).toHaveLength(3)
-  expect(Object.keys(s.state.accounts[0]!).sort()).toEqual(['code', 'id', 'name', 'qrEnabled'])
+  expect(Object.keys(s.state.accounts[0]!).sort()).toEqual(['code', 'id', 'name', 'qrEnabled', 'session', 'verification', 'verifiedAt'])
+  expect(JSON.stringify(s.state)).not.toContain('synthetic-expired')
   expect(JSON.stringify(s.state)).not.toContain('JBSWY3DPEHPK3PXP')
   expect(s.state.requests[0]).not.toHaveProperty('raw')
 })
@@ -94,6 +95,7 @@ test('browser cookies cannot cross unrelated domains', () => {
   const cookies = [{ name: 'ssid', value: 'right', domain: '.riotgames.com' }, { name: 'ssid', value: 'wrong', domain: '.notriotgames.com' }] as any
   expect(cookiesForHost(cookies, 'auth.riotgames.com')).toEqual({ ssid: 'right' })
   expect(cookieHeader({ ssid: 'safe', bad: 'bad\r\nvalue' })).toBe('ssid=safe')
+  expect(cookieHeader({ 'authenticator.sid': 'session', 'bad=name': 'rejected', 'bad value': 'rejected', 'bad-control': 'bad\0value' })).toBe('authenticator.sid=session')
 })
 test('cached access tokens need a future expiry', () => {
   const token = (payload: object) => `e30.${Buffer.from(JSON.stringify(payload)).toString('base64url')}.signature`

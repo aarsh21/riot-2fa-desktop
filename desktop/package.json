@@ -9,6 +9,8 @@
     "typecheck": "tsc --noEmit",
     "build": "bun scripts/package.ts",
     "verify": "bun scripts/verify.ts",
+    "verify:session": "bun scripts/verify-session-ui.ts",
+    "verify:login": "bun scripts/verify-login.ts",
     "test": "bun test src/services",
     "prepare:renderer": "bun scripts/prepare-renderer.ts"
   },

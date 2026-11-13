@@ -10,12 +10,12 @@ import { PushClient } from './services/push'
 import type { SnapshotEvent } from './services/windows-snapshots'
 import { Snapshots } from './services/shortcuts'
 
-export type Account = { id: string; name: string; code: string | null; qrEnabled: boolean }
+export type Account = { id: string; name: string; code: string | null; qrEnabled: boolean; session: 'local' | 'saved' | 'connected' | 'expired'; verification: 'unknown' | 'pending' | 'verified' | 'rejected'; verifiedAt?: number }
 export type LoginRequest = { id: string; accountId: string; name: string; time: number | string | null; location: string; demo?: boolean }
 export type State = { accounts: Account[]; requests: LoginRequest[]; remaining: number; pushStatus: string; demo: boolean; dark: boolean; storagePath: string; error: string | null; snapshotsEnabled: boolean; snapshotStatus: string; snapshot: (SnapshotEvent & { id: string }) | null }
 export type Result = { message?: string; url?: string; confirmation?: string; name?: string; location?: string }
 type PendingRequest = LoginRequest & { raw?: Record<string, unknown>; busy?: boolean }
-type QrConfirmation = { accountId: string; token: string; suuid: string; cluster: string; expires: number }
+type QrConfirmation = { accountId: string; suuid: string; cluster: string; expires: number }
 
 async function loginStep<T>(label: string, action: () => Promise<T>): Promise<T> {
   try { return await action() }
@@ -34,6 +34,9 @@ export class AccountService {
   private browser = new BrowserLogin()
   private push: PushClient | null = null
   private timer: ReturnType<typeof setInterval>
+  private renewalTimer: ReturnType<typeof setInterval> | null = null
+  private renewing = false
+  private tokenRequests = new Map<string, Promise<string>>()
   private appearanceTimer: ReturnType<typeof setInterval> | null = null
   private clipboardTimers = new Set<ReturnType<typeof setTimeout>>()
   private stopped = false
@@ -51,9 +54,9 @@ export class AccountService {
     try {
       if (!demo && !vault) throw new Error(startupError || 'The encrypted vault is unavailable. Reopen the app after unlocking your OS credential store.')
       this.accounts = demo ? [
-        { name: 'alex#EUW', seed: 'JBSWY3DPEHPK3PXP', sso: { demo: 'true' } },
+        { name: 'alex#EUW', seed: 'JBSWY3DPEHPK3PXP', sso: { ssid: 'synthetic' }, verification: 'verified', access_token: `e30.${Buffer.from(JSON.stringify({ exp: Date.now() / 1000 + 3600 })).toString('base64url')}.demo` },
         { name: 'alex#NA1', seed: 'KRUGS4ZANFZSAYJA' },
-        { name: 'weekend#EUW', seed: 'MFRGGZDFMZTWQ2LK' },
+        { name: 'weekend#EUW', seed: 'MFRGGZDFMZTWQ2LK', sso: { ssid: 'synthetic-expired' }, sessionExpired: true },
       ] : validateAccounts(vault!.read('accounts', []))
     } catch (error) { this.error = error instanceof Error ? error.message : 'Account storage could not be read.' }
     if (demo) {
@@ -72,13 +75,15 @@ export class AccountService {
       if (!this.error) {
         this.push = new PushClient(this.vault!, data => this.onPush(data), status => { this.pushStatus = status; this.emit() }, token => { void this.registerExisting(token) })
         void this.push.start()
+        void this.renewSessions()
+        this.renewalTimer = setInterval(() => void this.renewSessions(), 15 * 60 * 1000)
       }
     }
   }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   private snapshot(): State {
     return {
-      accounts: this.accounts.map(account => { let code: string | null = null; try { code = totp(account.seed) } catch {} return { id: accountId(account), name: account.name, code, qrEnabled: Boolean(account.sso && Object.keys(account.sso).length) } }),
+      accounts: this.accounts.map(account => { let code: string | null = null; try { code = totp(account.seed) } catch {} return { id: accountId(account), name: account.name, code, qrEnabled: Boolean(account.puuid || account.sso?.ssid || account.access_token), session: account.sessionExpired ? 'expired' : !account.sso?.ssid && !account.access_token ? 'local' : riot.tokenValid(account.access_token) ? 'connected' : 'saved', verification: account.verification || 'unknown', verifiedAt: account.verifiedAt } }),
       requests: [...this.requests.values()].map(({ raw, busy, ...request }) => request), remaining: 30 - Math.floor(Date.now() / 1000) % 30,
       pushStatus: this.pushStatus, demo: this.demo, dark: this.themeDark, storagePath: this.demo ? 'In-memory demo' : this.directory, error: this.error,
       snapshotsEnabled: this.snapshotsEnabled, snapshotStatus: this.snapshotStatus, snapshot: this.latestSnapshot,
@@ -133,6 +138,8 @@ export class AccountService {
           return { message: 'Code copied. Clipboard clears after 30 seconds while the app is open.' }
         }
         case 'login': return await this.login()
+        case 'reconnect': return await this.login(this.account(params.accountId))
+        case 'verify': return await this.checkCode(this.account(params.accountId))
         case 'respond': return await this.respond(String(params.requestId), params.approve === true)
         case 'scan': {
           if (this.demo) throw new riot.ServiceError('Screen scanning is disabled in the demo.')
@@ -159,26 +166,73 @@ export class AccountService {
       throw new riot.ServiceError('The action failed. Check your connection and try again. Your saved accounts have not been cleared.')
     } finally { this.busy = false; this.emit() }
   }
-  private async login(): Promise<Result> {
+  private async login(target?: SavedAccount): Promise<Result> {
     if (this.demo) throw new riot.ServiceError('Browser login is disabled in the demo. Launch normally to connect your account.')
     const session = await this.browser.login()
     if (!session) return { message: 'Browser login cancelled' }
-    const csrf = session.csrf
-    const user = await loginStep('Reading your Riot account', () => riot.fetchUser(session.cookies, csrf))
-    const response = await loginStep('Checking two-factor authentication', () => riot.fetchFactors(session.cookies, csrf))
+    const user = await loginStep('Reading your Riot account', () => riot.fetchUser(session.cookies, session.csrf))
+    const puuid = user.puuid || user.sub
+    if (typeof puuid !== 'string' || !puuid) throw new riot.ServiceError('Riot did not return an account identity. Nothing was changed.')
+    if (target?.puuid && target.puuid !== puuid) throw new riot.ServiceError(`Sign in to ${target.name} to reconnect it. You signed in to a different account; nothing was changed.`)
+    if (target && !target.puuid) {
+      if (this.accounts.some(a => a !== target && a.puuid === puuid)) throw new riot.ServiceError('That Riot account is already connected here. Nothing was changed.')
+      // A manual secret must prove it belongs to the signed-in identity before
+      // attaching that identity or enabling QR access for it.
+      const sessionToken = await riot.mintToken(session.sso)
+      if (!sessionToken.token) throw new riot.ServiceError('Riot needs another browser sign-in. Nothing was changed.')
+      await riot.verifyMfa(sessionToken.token, target.seed)
+      this.update(target, { puuid, sso: sessionToken.cookies, access_token: sessionToken.token, sessionExpired: false, verification: 'verified', verifiedAt: Date.now() })
+      if (this.push?.token) {
+        try { await this.authorized(target, token => riot.registerPush(token, this.push!.token)) }
+        catch { this.lastRegisteredToken = ''; return { message: 'Riot accepted your code. QR access is connected; push registration will retry automatically.' } }
+      }
+      return { message: 'Riot accepted your code. Account connected for QR sign-in.' }
+    }
+    const existing = target || this.accounts.find(a => a.puuid === puuid)
+    if (existing) {
+      this.update(existing, { sso: session.sso, access_token: undefined, sessionExpired: false })
+      const result = await this.checkCode(this.account(accountId(existing)))
+      return { message: `Account reconnected. ${result.message}` }
+    }
+    const response = await loginStep('Checking two-factor authentication', () => riot.fetchFactors(session.cookies, session.csrf))
     const factors = Array.isArray(response) ? response : response.factors
     if (!Array.isArray(factors) || !factors.some(f => f.factor === 'email' && f.status === 'enabled')) throw new riot.ServiceError('Enable email two-factor authentication at account.riotgames.com, then try again.')
-    const seed = await loginStep('Connecting the authenticator', () => riot.enableMfa(session.cookies, csrf))
-    const account: SavedAccount = { name: riot.userName(user), seed, puuid: user.puuid || user.sub, sso: session.sso }
+    if (factors.some(f => f.factor === 'riotmobile' && f.status === 'enabled')) throw new riot.ServiceError('Riot Mobile is already enabled. Import its existing secret, or reconnect the account on the device where you added it. This app cannot retrieve an existing secret, and will not reset it.')
+    const seed = extractSecret(await loginStep('Connecting the authenticator', () => riot.enableMfa(session.cookies, session.csrf)))
+    const account: SavedAccount = { name: riot.userName(user), seed, puuid, sso: session.sso, verification: 'pending' }
+    // Preserve a newly issued secret even if verification is interrupted. Never
+    // present it as verified until Riot has accepted an OTP made from this seed.
     this.store(account)
-    let message = 'Account added'
     try {
-      const token = await this.validToken(account)
-      await riot.verifyMfa(token, seed)
-      if (this.push?.token) await riot.registerPush(token, this.push.token)
-      else message += '. Push registration is unavailable; codes are ready.'
-    } catch { message += '. Verification or push registration failed; the account secret was saved.' }
-    return { message }
+      const result = await this.checkCode(account)
+      return { message: `Account added. ${result.message}` }
+    } catch (error) {
+      throw new riot.ServiceError(`Account saved, but setup is not verified. ${error instanceof riot.ServiceError ? error.message : 'Check your connection and try Check code.'}`)
+    }
+  }
+  private update(account: SavedAccount, change: Partial<SavedAccount>) {
+    this.commit(this.accounts.map(a => accountId(a) === accountId(account) ? { ...a, ...change } : a))
+    this.emit()
+  }
+  private async checkCode(account: SavedAccount): Promise<Result> {
+    if (this.demo) return { message: 'Demo code check. No request was sent to Riot.' }
+    try {
+      await this.authorized(account, token => riot.verifyMfa(token, account.seed))
+      this.update(account, { verification: 'verified', verifiedAt: Date.now() })
+    } catch (error) {
+      if (error instanceof riot.ServiceError && error.status === 400) {
+        this.update(account, { verification: 'rejected' })
+        throw new riot.ServiceError('Riot rejected this code. Check that your computer sets time automatically. If Riot Mobile was set up again elsewhere, this saved secret may have been replaced. Reconnecting preserves your secret; it cannot repair a replaced secret.')
+      }
+      throw error
+    }
+    // Push registration is separate from code verification. Its failure must
+    // neither mark valid codes broken nor claim that notifications are ready.
+    if (this.push?.token) {
+      try { await this.authorized(account, token => riot.registerPush(token, this.push!.token)) }
+      catch { this.lastRegisteredToken = ''; return { message: 'Riot accepted your code. Push registration will retry automatically; use codes or QR sign-in.' } }
+    }
+    return { message: 'Riot accepted your code. Codes work offline; QR sign-in uses your online session.' }
   }
   private startSnapshots() {
     this.snapshots.start(event => {
@@ -188,25 +242,77 @@ export class AccountService {
       this.emit()
     })
   }
-  private async validToken(account: SavedAccount): Promise<string> {
-    let token: string | null = null
-    try { token = await riot.mintToken(account.sso) } catch {}
-    if (token) {
-      this.commit(this.accounts.map(a => accountId(a) === accountId(account) ? { ...a, access_token: token! } : a))
-      return token
+  private async validToken(account: SavedAccount, force = false): Promise<string> {
+    account = this.account(accountId(account))
+    if (!force && riot.tokenValid(account.access_token)) return account.access_token!
+    const id = accountId(account)
+    const pending = this.tokenRequests.get(id)
+    if (pending) return pending
+    const refresh = this.refreshToken(account)
+    this.tokenRequests.set(id, refresh)
+    try { return await refresh } finally { if (this.tokenRequests.get(id) === refresh) this.tokenRequests.delete(id) }
+  }
+  private async refreshToken(account: SavedAccount): Promise<string> {
+    let session: riot.TokenSession
+    try { session = await riot.mintToken(account.sso) }
+    catch (error) {
+      if (this.stopped) throw error
+      const latest = this.account(accountId(account))
+      if (latest.sso?.ssid !== account.sso?.ssid) return this.refreshToken(latest)
+      if (error instanceof riot.ServiceError && error.kind === 'session') this.update(account, { sessionExpired: true, access_token: undefined })
+      throw error
     }
-    if (riot.tokenValid(account.access_token)) return account.access_token!
-    throw new riot.ServiceError('Your session expired. Add this account again through browser login.')
+    if (this.stopped) throw new riot.ServiceError('The app is closing. Your accounts are saved.')
+    const latest = this.account(accountId(account))
+    // A browser reconnection can finish while a scheduled refresh is in flight.
+    // Never let an older response overwrite the newly connected session.
+    if (latest.sso?.ssid !== account.sso?.ssid) {
+      if (riot.tokenValid(latest.access_token)) return latest.access_token!
+      return this.refreshToken(latest)
+    }
+    this.update(account, { sso: session.cookies, access_token: session.token || undefined, sessionExpired: !session.token })
+    if (!session.token) throw new riot.ServiceError('Riot requires you to sign in again for QR access. Choose Reconnect on this account. Your saved secret and offline codes are unchanged.', 'session')
+    return session.token
+  }
+  private async authorized<T>(account: SavedAccount, action: (token: string) => Promise<T>): Promise<T> {
+    const token = await this.validToken(account)
+    try { return await action(token) }
+    catch (error) {
+      // Retry only an explicit expired bearer response. Network errors and
+      // invalid QR requests must never trigger a second approval submission.
+      if (!(error instanceof riot.ServiceError) || error.status !== 401) throw error
+      const renewed = await this.validToken(account, true)
+      try { return await action(renewed) }
+      catch (retryError) {
+        if (retryError instanceof riot.ServiceError && retryError.status === 401) this.update(account, { access_token: undefined, sessionExpired: true })
+        throw retryError
+      }
+    }
+  }
+  private async renewSessions() {
+    if (this.renewing || this.busy || this.stopped) return
+    this.renewing = true
+    try {
+      for (const account of [...this.accounts]) {
+        if (this.stopped) break
+        if (!account.sso?.ssid || account.sessionExpired) continue
+        try { await this.validToken(account, true) } catch { /* Status is changed only on confirmed session expiry. */ }
+      }
+      if (!this.stopped && this.push?.token) await this.registerExisting(this.push.token)
+    } finally { this.renewing = false }
   }
   private async registerExisting(token: string) {
     if (token === this.lastRegisteredToken || this.stopped) return
-    this.lastRegisteredToken = token
-    let failures = 0
+    let failures = 0, expired = false
     for (const account of [...this.accounts]) {
       if (!account.sso?.ssid || this.stopped) continue
-      try { await riot.registerPush(await this.validToken(account), token) } catch { failures++ }
+      try { await riot.registerPush(await this.validToken(account), token) }
+      catch (error) { failures++; expired ||= error instanceof riot.ServiceError && error.kind === 'session' }
     }
-    if (failures) { this.pushStatus = 'Some accounts need browser reconnection'; this.emit() }
+    this.lastRegisteredToken = failures ? '' : token
+    if (failures) this.pushStatus = expired ? 'Listener connected · Some accounts need reconnection' : 'Listener connected · Account registration will retry'
+    else if (this.pushStatus.startsWith('Listener connected')) this.pushStatus = 'Listening'
+    this.emit()
   }
   private onPush(raw: Record<string, unknown>) {
     const account = this.accounts.find(a => a.puuid && a.puuid === raw.puuid)
@@ -227,23 +333,22 @@ export class AccountService {
   private async prepareQr(id: string, url: string): Promise<Result> {
     if (this.demo) throw new riot.ServiceError('QR sign-in is disabled in the demo.')
     const account = this.account(id)
-    if (!account.sso?.ssid) throw new riot.ServiceError('QR sign-in needs an account added through browser login.')
+    if (!account.sso?.ssid && !account.access_token) throw new riot.ServiceError('QR sign-in needs an account added through browser login.')
     const { suuid, cluster } = riot.parseQr(url)
-    const token = await this.validToken(account)
-    const info = await riot.qrInfo(token, suuid, cluster)
+    const info = await this.authorized(account, token => riot.qrInfo(token, suuid, cluster))
     const geo = info.request?.geolocation || info.auth_session?.geolocation
     const location = geo?.lat != null && geo?.lon != null ? `${geo.lat}, ${geo.lon}` : 'Location unavailable'
     const confirmation = randomUUID()
     this.confirmations.clear()
-    this.confirmations.set(confirmation, { accountId: id, token, suuid, cluster, expires: Date.now() + 90000 })
+    this.confirmations.set(confirmation, { accountId: id, suuid, cluster, expires: Date.now() + 90000 })
     return { confirmation, name: account.name, location }
   }
   private async approveQr(id: string): Promise<Result> {
     const request = this.confirmations.get(id)
     this.confirmations.delete(id)
     if (!request || request.expires < Date.now()) throw new riot.ServiceError('This confirmation expired. Scan the code again.')
-    this.account(request.accountId)
-    const result = await riot.approveQr(request.token, request.suuid, request.cluster)
+    const account = this.account(request.accountId)
+    const result = await this.authorized(account, token => riot.approveQr(token, request.suuid, request.cluster))
     if (Object.keys(result).length && result.success !== true) throw new riot.ServiceError('Riot did not confirm the sign-in. Try a new QR code.')
     return { message: 'QR sign-in approved' }
   }
@@ -258,6 +363,7 @@ export class AccountService {
   close() {
     this.stopped = true; clearInterval(this.timer)
     if (this.appearanceTimer) clearInterval(this.appearanceTimer)
+    if (this.renewalTimer) clearInterval(this.renewalTimer)
     for (const timer of this.clipboardTimers) clearTimeout(timer)
     this.browser.cancel(); this.push?.close()
     this.snapshots.close(); this.captureController?.abort()

@@ -34,14 +34,17 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/desktop-v')
         run: bun -e "if (process.env.GITHUB_REF_NAME !== 'desktop-v' + (await Bun.file('package.json').json()).version) throw new Error('Tag and package version differ')"
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libegl1 libxkbcommon0 libwayland-client0 wl-clipboard grim slurp xclip imagemagick libayatana-appindicator3-1 libsecret-1-0 gnome-keyring dbus-x11 gcc g++ clang libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libx11-xcb-dev libssl-dev libzstd-dev libvulkan1
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libxkbcommon0 libwayland-client0 wl-clipboard grim slurp xclip imagemagick libayatana-appindicator3-1 libsecret-1-0 gnome-keyring dbus-x11 gcc g++ clang libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libx11-xcb-dev libssl-dev libzstd-dev libvulkan1 mesa-vulkan-drivers xvfb openbox
       - run: bun install --frozen-lockfile
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: '1.97.1'
+      - name: Prepare renderer sources
+        run: bun scripts/prepare-renderer.ts --checkout-only
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: desktop/.gpuix/packages/native
+          cache-on-failure: true
       - if: runner.os == 'macOS'
         run: xcodebuild -downloadComponent MetalToolchain
       - run: bun run prepare:renderer
@@ -53,6 +56,22 @@ jobs:
       - if: runner.os != 'Linux'
         run: bun scripts/verify-accessibility.tsx
       - run: bun test src/services
+      - name: Verify native session recovery
+        if: runner.os != 'Linux'
+        run: bun run verify:session
+      - name: Verify native session recovery under X11
+        if: runner.os == 'Linux'
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          RUST_LOG: gpui_linux=info,gpui_wgpu=info
+        run: xvfb-run --auto-servernum --server-args='-screen 0 1280x900x24' sh -c 'openbox > /tmp/riot-openbox.log 2>&1 & bun run verify:session'
+      - name: Save session verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: session-verification-${{ matrix.platform }}
+          path: desktop/test-results/session-ui.json
+          if-no-files-found: ignore
       - if: failure() && runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:

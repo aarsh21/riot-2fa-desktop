@@ -18,6 +18,9 @@ export function extractSecret(value: string): string {
   let raw = value.trim()
   if (/^(https?:|otpauth:)/i.test(raw)) {
     const url = new URL(raw)
+    if (url.protocol === 'otpauth:') {
+      if (url.hostname !== 'totp' || (url.searchParams.has('algorithm') && url.searchParams.get('algorithm')?.toUpperCase() !== 'SHA256') || (url.searchParams.has('digits') && url.searchParams.get('digits') !== '6') || (url.searchParams.has('period') && url.searchParams.get('period') !== '30')) throw new Error('Riot Mobile needs SHA256, 6 digits and a 30-second period. This setup URL uses different settings.')
+    }
     raw = url.searchParams.get('seed') || url.searchParams.get('secret') || ''
   }
   const normalized = raw.toUpperCase().replace(/\s/g, '').replace(/=+$/, '')

@@ -11,6 +11,7 @@ async function launch(options: { command: string; args: string[]; cwd: string; e
 }
 
 async function screenshot(app: Awaited<ReturnType<typeof launch>>, path: string) {
+  if (process.argv.includes('--no-captures')) return
   await new Promise(resolve => setTimeout(resolve, 100))
   if (process.platform !== 'linux' || !process.env.HYPRLAND_INSTANCE_SIGNATURE) return app.screenshot({ path })
   const clients = JSON.parse(execFileSync('hyprctl', ['-j', 'clients'], { encoding: 'utf8' }))
@@ -37,6 +38,7 @@ for (const config of configurations) {
       execFileSync('hyprctl', ['dispatch', `hl.dsp.window.float({ window = "address:${client.address}", action = "toggle" })`])
       execFileSync('hyprctl', ['dispatch', `hl.dsp.window.resize({ window = "address:${client.address}", x = ${config.width}, y = 760 })`])
       execFileSync('hyprctl', ['dispatch', `hl.dsp.window.center({ window = "address:${client.address}" })`])
+      execFileSync('hyprctl', ['dispatch', `hl.dsp.window.tag({ window = "address:${client.address}", tag = "-default-opacity" })`])
       execFileSync('hyprctl', ['setprop', `address:${client.address}`, 'opacity', '1 override 1 override', 'lock'])
       execFileSync('hyprctl', ['setprop', `address:${client.address}`, 'opaque', 'true'])
       execFileSync('hyprctl', ['setprop', `address:${client.address}`, 'force_rgbx', 'true'])
@@ -51,6 +53,9 @@ for (const config of configurations) {
     await app.getByText('No matching accounts').waitFor()
     await app.getByTestId('clear-search').press('enter')
     await app.getByText('alex#EUW').waitFor()
+    await app.getByText('QR access needs reconnection').waitFor()
+    await app.getByTestId('verify-4a434936c210a04edefad943').press('enter')
+    await app.getByText('Demo code check. No request was sent to Riot.').waitFor()
     await app.getByTestId('toggle-codes').press('enter')
     await app.getByText('Show codes').waitFor()
     assert.equal(await app.getByText('••• •••').count(), 3)
@@ -75,6 +80,7 @@ for (const config of configurations) {
     await app.getByTestId('save-account').press('enter')
     await app.getByText('test#LOCAL').waitFor()
     await app.getByTestId('nav-qr').press('enter')
+    await app.getByTestId('qr-account-4a434936c210a04edefad943').waitFor()
     await screenshot(app, `${output}/qr-dark.png`)
     await app.getByTestId('nav-settings').press('enter')
     await screenshot(app, `${output}/settings-dark.png`)

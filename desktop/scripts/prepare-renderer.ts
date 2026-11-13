@@ -18,7 +18,10 @@ const head = await new Response(Bun.spawn(['git', 'rev-parse', 'HEAD'], { cwd: s
 if (head.trim() !== revision) throw new Error('GPUIx checkout does not match the pinned revision')
 await run(['git', 'submodule', 'update', '--init', '--recursive', '--depth', '1'])
 await run(['bun', 'install', '--frozen-lockfile', '--ignore-scripts'])
-await run(['cargo', 'build', '--release', '--locked', ...(process.platform === 'linux' ? ['--no-default-features'] : ['--features', 'test-support'])], join(source, 'packages/native'))
+if (process.argv.includes('--checkout-only')) process.exit(0)
+// gpui_linux/x11 does not forward gpui/x11. Enable the core feature too so
+// guess_compositor() selects X11 instead of silently opening a headless app.
+await run(['cargo', 'build', '--release', '--locked', ...(process.platform === 'linux' ? ['--no-default-features', '--features', 'gpui/x11'] : ['--features', 'test-support'])], join(source, 'packages/native'))
 await run(['bun', 'run', 'build'], join(source, 'packages/react'))
 const target = process.env.CARGO_TARGET_DIR || join(source, 'packages/native/target')
 const nativeFile = process.platform === 'win32' ? 'gpuix_native.dll' : process.platform === 'darwin' ? 'libgpuix_native.dylib' : 'libgpuix_native.so'
